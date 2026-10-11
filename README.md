@@ -1,2 +1,2 @@
-# Qurior-
+# Quoridor
 Atividade de SD
