@@ -1,0 +1,3 @@
+# Scripts de shell precisam de LF, inclusive quando o checkout ocorre no Windows.
+*.sh text eol=lf
+*.bat text eol=crlf

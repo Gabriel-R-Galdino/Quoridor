@@ -1,6 +1,6 @@
 # Quoridor distribuído para 4 jogadores
 
-Trabalho de Sistemas Distribuídos com interface de terminal. O motor de regras, os contratos compartilhados e o servidor RMI estão implementados e testados. O cliente de terminal ainda é um esqueleto.
+Trabalho de Sistemas Distribuídos com interface de terminal. O motor de regras, os contratos compartilhados, o servidor RMI e o cliente de terminal estão implementados e testados. A partida usa um servidor e quatro clientes em cinco processos Java separados.
 
 ## Tecnologias e requisitos
 
@@ -15,6 +15,11 @@ Trabalho de Sistemas Distribuídos com interface de terminal. O motor de regras,
 
 ```text
 pom.xml
+APRESENTACAO.md
+scripts/
+├── compilar.bat / compilar.sh
+├── iniciar-servidor.bat / iniciar-servidor.sh
+└── iniciar-cliente.bat / iniciar-cliente.sh
 src/main/java/
 ├── model/
 │   ├── Board.java
@@ -35,10 +40,13 @@ src/main/java/
 └── client/
     ├── ClientMain.java
     ├── ClientCallbackImpl.java
+    ├── TerminalCommand.java
     └── TerminalUI.java
 
 src/test/java/model/QuoridorRulesTest.java
 src/test/java/server/GameServerImplTest.java
+src/test/java/client/TerminalUITest.java
+src/test/java/client/ClientProcessIntegrationTest.java
 ```
 
 | Pacote | Responsabilidade |
@@ -47,6 +55,103 @@ src/test/java/server/GameServerImplTest.java
 | `common` | Interfaces remotas e DTOs serializáveis compartilhados. |
 | `server` | Registry, partida autoritativa, validação e notificações. |
 | `client` | Conexão, exportação do callback e interface de caracteres. |
+
+## Como rodar com os scripts
+
+Instale um **JDK 17+** e o **Maven**, com `java`, `javac` e `mvn` no `PATH`. Na primeira compilação, o Maven precisa baixar seus plugins e o JUnit. A aplicação usa somente o JDK em execução.
+
+Compile **antes** de iniciar a partida. O script executa `mvn package`, incluindo os testes e a geração do JAR. Deixe a porta 1099 livre, pois um teste inicia um servidor real. Os scripts localizam a raiz pelo próprio caminho e podem ser chamados de outras pastas; os exemplos abaixo partem da raiz do repositório.
+
+### Windows — PowerShell ou Prompt de Comando
+
+Compile uma vez:
+
+```text
+.\scripts\compilar.bat
+```
+
+No **terminal 1**, inicie o servidor:
+
+```text
+.\scripts\iniciar-servidor.bat
+```
+
+Nos **terminais 2, 3, 4 e 5**, execute uma vez em cada terminal:
+
+```text
+.\scripts\iniciar-cliente.bat
+```
+
+### Linux/macOS — shell
+
+Compile uma vez:
+
+```sh
+sh scripts/compilar.sh
+```
+
+No **terminal 1**, inicie o servidor:
+
+```sh
+sh scripts/iniciar-servidor.sh
+```
+
+Nos **terminais 2, 3, 4 e 5**, execute uma vez em cada terminal:
+
+```sh
+sh scripts/iniciar-cliente.sh
+```
+
+Cada cliente pede o nome do jogador. A quarta entrada inicia a partida. Os scripts mantêm o processo no terminal atual, permitindo ver as mensagens e digitar comandos; não abrem terminais adicionais. Há cinco processos da aplicação: um servidor e quatro clientes.
+
+O cliente usa `localhost` por padrão. Pode ser informado explicitamente com `.\scripts\iniciar-cliente.bat localhost` ou `sh scripts/iniciar-cliente.sh localhost`. Os scripts de início avisam se o JAR estiver ausente; depois de mudar o código, compile novamente para atualizar o JAR.
+
+Use `q` para sair de um cliente e Ctrl+C para encerrar o servidor. Para uma nova partida, encerre os processos anteriores e inicie novamente o servidor e os quatro clientes. O servidor mantém uma única partida por execução.
+
+`compilar.bat` e `compilar.sh` encaminham argumentos adicionais ao Maven; por exemplo, `.\scripts\compilar.bat -o` usa o cache já disponível, sem baixar artefatos. A execução dos testes em cinco processos exige que o ambiente permita conexões RMI em localhost.
+
+## Diagrama da arquitetura em texto
+
+```text
+Mesma máquina (localhost)
+
+JVM 1: Cliente A -- stub GameService --+
+JVM 2: Cliente B -- stub GameService --+
+JVM 3: Cliente C -- stub GameService --+-- chamadas RMI --> JVM 5: Servidor
+JVM 4: Cliente D -- stub GameService --+                    |
+                                                         +-- Registry :1099
+                                                         |   QuoridorService
+                                                         +-- GameServerImpl
+                                                         |   estado sincronizado
+                                                         +-- QuoridorRules / model
+                                                         +-- fila de notificações
+
+JVMs 1 a 4: ClientCallbackImpl <--- callbacks RMI -------- fila de notificações
+                 |
+                 +-- fila de eventos da TerminalUI --> desenho ASCII e mensagens
+```
+
+O Registry está dentro da JVM do servidor. Cada cliente consulta `QuoridorService` para obter seu stub; depois, as jogadas vão ao objeto remoto do serviço. Cada cliente também exporta seu próprio callback e passa o stub dele ao servidor em `join`. Os callbacks retornam diretamente aos objetos remotos dos clientes. As portas dos objetos exportados são escolhidas pelo RMI; a 1099 é a porta do catálogo Registry.
+
+## Fluxo de uma jogada
+
+```text
+cliente -> stub GameService -> servidor -> validação -> estado oficial
+                                                    -> fila de callbacks
+                                                    -> stubs ClientCallback
+                                                    -> clientes redesenham o DTO
+```
+
+1. `TerminalUI.handleCommand` interpreta a entrada com `TerminalCommand`. Por exemplo, `m s` do jogador A na posição inicial pede o destino `(1,4)`.
+2. O cliente chama `GameService.move(0,1,4)` no stub. O RMI transporta a invocação até `GameServerImpl.move`.
+3. Sob `synchronized`, `requireTurn` verifica registro, início da partida, vencedor e turno. `QuoridorRules.tryMove` verifica paredes, ocupação e regras de movimento.
+4. Se houver recusa, o servidor lança `GameException`; o cliente apresenta a mensagem e permite corrigir o comando. Nada é alterado no estado oficial.
+5. Se a jogada for aceita, o servidor altera o estado, avança o turno ou detecta vitória, incrementa a versão e captura um `GameStateDTO` imutável.
+6. `publish` enfileira as notificações. A chamada remota retorna sem esperar a entrega de todos os callbacks.
+7. Fora do monitor do estado, a fila chama `onMessage` e `onStateUpdate` nos stubs de callback dos jogadores conectados; após uma vitória, também chama `onGameOver`.
+8. `ClientCallbackImpl` coloca eventos na fila da interface. `TerminalUI` descarta versões antigas e redesenha o tabuleiro. Uma falha de callback faz o servidor desconectar aquele jogador e publicar a nova situação.
+
+Pedidos de parede seguem o mesmo fluxo, usando `placeWall` e `QuoridorRules.tryPlaceWall`, com verificação de sobreposição, cruzamento, inventário e BFS para os quatro objetivos.
 
 ## Motor de regras implementado
 
@@ -84,7 +189,7 @@ O exemplo pressupõe `import model.QuoridorRules;`. O motor não usa RMI e não 
 
 `ServerMain` cria o Registry embutido com `LocateRegistry.createRegistry(1099)`, exporta o serviço remoto e o registra como `QuoridorService`. Não é necessário iniciar `rmiregistry` separadamente. A porta 1099 pertence ao Registry; os objetos remotos têm suas portas de exportação gerenciadas pelo RMI.
 
-Cada futuro cliente será iniciado em sua própria JVM, consultará o Registry em `localhost:1099`, exportará um objeto que implementa `ClientCallback` e enviará seu stub ao servidor no registro do jogador. O servidor armazena essas referências para enviar atualizações por callback RMI. O quarto registro inicia automaticamente a partida.
+Cada cliente é iniciado em sua própria JVM, consulta o Registry em `localhost:1099`, exporta um objeto que implementa `ClientCallback` e envia seu stub ao servidor no registro do jogador. O servidor armazena essas referências para enviar atualizações por callback RMI. O quarto registro inicia automaticamente a partida.
 
 | Operação de `GameService` | Comportamento |
 | --- | --- |
@@ -113,13 +218,50 @@ Na raiz, com Java 17+ e Maven instalados:
 mvn clean package
 ```
 
-O resultado será `target/quoridor-distribuido-0.1.0-SNAPSHOT.jar`. Inicie o servidor com:
+O resultado será `target/quoridor-distribuido-0.1.0-SNAPSHOT.jar`. No primeiro terminal, inicie o servidor:
 
 ```text
 java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar server.ServerMain
 ```
 
-Ou, após `mvn compile`, use `java -cp target/classes server.ServerMain`. Encerre com Ctrl+C. A porta 1099 precisa estar livre. O JAR não possui manifesto para `java -jar`; o ponto de entrada é informado pelo comando acima. `ClientMain` ainda não é executável.
+Em outros **quatro terminais**, execute uma vez em cada um:
+
+```text
+java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar client.ClientMain
+```
+
+O cliente pede o nome do jogador e usa `localhost` por padrão. Para informar explicitamente o host do Registry:
+
+```text
+java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar client.ClientMain localhost
+```
+
+Ou, após `mvn compile`, use `java -cp target/classes server.ServerMain` e `java -cp target/classes client.ClientMain`. A porta 1099 precisa estar livre. O JAR não possui manifesto para `java -jar`; o ponto de entrada é informado pelo comando. Encerre o servidor com Ctrl+C.
+
+O host é um argumento de consulta ao Registry. Neste trabalho todos os processos ficam na mesma máquina, e os stubs de servidor e callbacks anunciam `localhost`; execução entre máquinas diferentes não é parte desta configuração.
+
+## Como jogar pelo terminal
+
+Os símbolos são fixos: `A` norte (ID 0), `B` sul (ID 1), `C` leste (ID 2) e `D` oeste (ID 3). Não é necessário suporte a cores ou códigos ANSI. Cada atualização mostra o tabuleiro completo, nomes, quantidades de paredes, desconexões, jogador da vez e vencedor. `-` representa parede horizontal; `|` representa parede vertical. As coordenadas das casas e interseções seguem a convenção descrita no motor.
+
+| Comando | Pedido |
+| --- | --- |
+| `m w` | Mover para o norte (linha diminui). |
+| `m a` | Mover para o oeste (coluna diminui). |
+| `m s` | Mover para o sul (linha aumenta). |
+| `m d` | Mover para o leste (coluna aumenta). |
+| `p L C h` | Colocar parede horizontal na interseção `(L,C)`, de 0 a 7. |
+| `p L C v` | Colocar parede vertical na interseção `(L,C)`, de 0 a 7. |
+| `m wa`, `m wd`, `m sa`, `m sd` | Escolher destino diagonal: noroeste, nordeste, sudoeste ou sudeste. |
+| `q` | Sair a qualquer momento, inclusive no turno de outro jogador. |
+
+Por exemplo, `p 3 0 h` pede uma parede horizontal em `(3,0)`. Se uma direção simples apontar para um peão adjacente, o cliente pede a casa atrás desse peão, permitindo o salto reto. Se o salto reto estiver impedido, use uma das direções diagonais para escolher a lateral. O cliente apenas converte essas intenções em destinos; o servidor valida paredes, ocupação, saltos e turnos.
+
+Os pedidos de jogada são enviados quando o último estado recebido indica sua vez. Após um pedido aceito, o cliente aguarda a próxima atualização antes de permitir outro. Se o estado ficar desatualizado, a validação final continua sendo do servidor. Comandos malformados e recusas do servidor mostram uma mensagem e permitem tentar novamente. Falhas de comunicação também são apresentadas sem encerrar automaticamente o terminal.
+
+O callback apenas coloca eventos em uma fila. Um único laço imprime mensagens e atualizações, enquanto uma thread daemon lê o teclado. Isso permite redesenhar o tabuleiro mesmo durante a espera por um comando, sem bloquear callbacks e sem executar regras localmente. Atualizações com versão antiga são descartadas.
+
+Após a vitória, o vencedor aparece com símbolo e nome, e novos comandos de jogada são recusados. Digite `q` para encerrar. `q`, fechamento da entrada e Ctrl+C tentam avisar `leave` ao servidor e removem a exportação do callback.
 
 Para executar somente os testes:
 
@@ -127,9 +269,22 @@ Para executar somente os testes:
 mvn test
 ```
 
-Os testes cobrem as regras do modelo e o serviço: início automático, recusas, snapshots serializáveis, desconexões, falhas nos quatro métodos de callback, vitória, concorrência e callback lento sem bloqueio do estado. O teste de integração exporta um servidor e quatro callbacks, consulta um Registry remoto e simula a queda de um objeto exportado, usando exclusivamente RMI em localhost. Ele usa uma porta dinâmica para não ocupar a 1099 e roda na mesma JVM de testes; a demonstração em cinco processos será feita com os clientes de terminal.
+Os testes cobrem as regras do modelo, o serviço e o cliente: início automático, recusas, snapshots serializáveis, desconexões, falhas nos quatro métodos de callback, vitória, concorrência, comandos, desenho, versões antigas e erros sem queda do terminal.
 
-## Próximas etapas
+O teste RMI do servidor usa um Registry em porta dinâmica e quatro callbacks exportados. O teste `ClientProcessIntegrationTest` inicia **cinco JVMs separadas**, usa a porta 1099 e controla a entrada dos quatro clientes reais: verifica início, movimentos, parede, erro devolvido pelo servidor e saída com desconexão. Deixe a porta 1099 livre ao executar `mvn test`. Todos os processos criados pelo teste são encerrados ao final.
 
-1. Implementar clientes, exportação dos callbacks e interface de terminal.
-2. Demonstrar uma partida em cinco processos separados.
+Para a apresentação, use os cinco terminais acima e demonstre uma jogada recusada, um salto, uma parede e a saída de um jogador sem interromper os demais.
+
+## Revisão do requisito de comunicação
+
+A revisão dos arquivos Java de `src/main/java` e `src/test/java` não encontrou referências diretas a `java.net.Socket` ou `java.net.ServerSocket`, nem importações de `java.net`. Conexões, consulta ao Registry, exportações e callbacks usam a API `java.rmi`. O transporte interno do RMI é responsabilidade do JDK.
+
+Para repetir a busca com ripgrep, opcionalmente instalado:
+
+```sh
+rg -n 'java\.net|\bSocket\b|\bServerSocket\b' src -g '*.java'
+```
+
+Sem correspondências, `rg` retorna código 1. As menções neste README e no roteiro descrevem o requisito, não são código de comunicação.
+
+O roteiro com explicações de stub, Registry, callback, sincronização, desconexão e arquivos específicos está em [APRESENTACAO.md](APRESENTACAO.md).
