@@ -13,6 +13,7 @@ import model.Wall;
 import java.rmi.RemoteException;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -25,7 +26,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
     private record Session(String name, ClientCallback callback) { }
     private record Recipient(int id, Session session) { }
 
-    private final QuoridorRules rules = new QuoridorRules();
+    private QuoridorRules rules = new QuoridorRules();
     private final Session[] sessions = new Session[4];
     // Nomes permanecem disponíveis no DTO mesmo depois da desconexão na partida.
     private final String[] names = {"", "", "", ""};
@@ -35,13 +36,16 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         return thread;
     });
     private boolean started;
+    // O ciclo de vida pertence ao servidor: inclui vitória sem alcançar o objetivo.
+    private Integer winnerId;
     private boolean closed;
     private long version;
 
     @Override
     public synchronized int join(String nome, ClientCallback callback) throws GameException {
         requireOpen();
-        if (started) { throw reject("A partida já começou; novas entradas não são permitidas."); }
+        if (connectedCount() == 4) { throw reject("Partida cheia: a partida já começou; aguarde todos saírem para uma nova partida."); }
+        if (started) { throw reject("A partida já começou; novas entradas só serão aceitas após todos saírem."); }
         if (nome == null || nome.isBlank()) { throw reject("Informe um nome não vazio."); }
         if (callback == null) { throw reject("O callback do cliente é obrigatório."); }
         for (Session session : sessions) {
@@ -51,7 +55,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         }
         int id = 0;
         while (id < 4 && sessions[id] != null) { id++; }
-        if (id == 4) { throw reject("A sala já possui quatro jogadores."); }
+        if (id == 4) { throw reject("Partida cheia: a sala já possui quatro jogadores."); }
         String name = nome.strip();
         // Impede que quebras de linha do nome confundam os logs do terminal.
         if (name.length() > 40 || name.codePoints().anyMatch(Character::isISOControl)) {
@@ -66,6 +70,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         }
         version++;
         String message = "Jogador " + id + " (" + name + ") entrou. " + connectedCount() + "/4 conectados.";
+        if (!started) { message += " " + lobbyMessage(); }
         log("ENTRADA", message);
         publish(message, justStarted, null);
         return id;
@@ -82,6 +87,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         String message = "Jogador " + playerId + " moveu para (" + linha + "," + coluna + ").";
         log("JOGADA", message);
         Integer winner = rules.getWinner() == null ? null : rules.getWinner().id();
+        winnerId = winner;
         if (winner != null) { log("VITÓRIA", "Vencedor: jogador " + winner + " (" + names[winner] + ")."); }
         publish(message, false, winner);
     }
@@ -125,8 +131,8 @@ public final class GameServerImpl implements GameService, AutoCloseable {
     private void requireTurn(int playerId) throws GameException {
         requireOpen();
         requireSession(playerId);
-        if (!started) { throw reject("Aguardando quatro jogadores para iniciar a partida."); }
-        if (rules.getWinner() != null) { throw reject("A partida já terminou. Vencedor: " + rules.getWinner().id() + "."); }
+        if (!started) { throw reject(lobbyMessage() + " Aguarde quatro jogadores para iniciar a partida."); }
+        if (winnerId != null) { throw reject("A partida já terminou. Vencedor: " + winnerId + "."); }
         if (rules.currentPlayer() == null || rules.currentPlayer().id() != playerId) {
             throw reject("Não é seu turno. Jogador da vez: "
                     + (rules.currentPlayer() == null ? "nenhum" : rules.currentPlayer().id()) + ".");
@@ -144,6 +150,22 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         return count;
     }
 
+    private String lobbyMessage() {
+        return "Aguardando jogadores (" + connectedCount() + "/4).";
+    }
+
+    /** Chamado sob o mesmo monitor das jogadas, sem recriar Registry ou serviço RMI. */
+    private void resetLobby() {
+        rules = new QuoridorRules();
+        Arrays.fill(sessions, null);
+        Arrays.fill(names, "");
+        started = false;
+        winnerId = null;
+        // A versão é do serviço, não da partida: nunca volta para trás entre resets.
+        // As sessões antigas são objetos distintos; seus callbacks pendentes serão ignorados.
+        log("RESET", "Partida anterior descartada. " + lobbyMessage());
+    }
+
     // Chamado exclusivamente dentro do monitor do servidor.
     private void disconnect(int id, String reason) {
         sessions[id] = null;
@@ -155,7 +177,25 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         version++;
         String message = "Jogador " + id + " desconectado: " + reason + ".";
         log("SAÍDA", message);
-        publish(message, false, null);
+        int connected = connectedCount();
+        if (connected == 0) {
+            resetLobby();
+            return; // Não existem destinatários; a próxima entrada receberá o lobby novo.
+        }
+        Integer newWinner = null;
+        if (started && winnerId == null && connected == 1) {
+            for (int remaining = 0; remaining < 4; remaining++) {
+                if (sessions[remaining] != null) { winnerId = remaining; break; }
+            }
+            newWinner = winnerId;
+            message += " Vencedor: jogador " + winnerId + " (" + names[winnerId]
+                    + "): demais jogadores desconectaram.";
+            log("VITÓRIA", message);
+        } else if (!started) {
+            message += " " + lobbyMessage();
+        }
+        // Motivo, snapshot final e onGameOver seguem na mesma tarefa e nesta ordem.
+        publish(message, false, newWinner);
     }
 
     private GameStateDTO snapshot() {
@@ -166,11 +206,10 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         List<GameStateDTO.WallDTO> walls = rules.getState().getBoard().getWalls().stream().map(wall ->
                 new GameStateDTO.WallDTO(wall.row(), wall.column(),
                         WallOrientation.valueOf(wall.orientation().name()))).toList();
-        Player winner = rules.getWinner();
         Player current = rules.currentPlayer();
         return new GameStateDTO(version, Board.SIZE, started,
-                !started || winner != null || current == null ? null : current.id(),
-                winner == null ? null : winner.id(), players, walls);
+                !started || winnerId != null || current == null ? null : current.id(),
+                winnerId, players, walls);
     }
 
     /** Captura dados e destinatários sob o monitor; a fila executará as chamadas depois. */

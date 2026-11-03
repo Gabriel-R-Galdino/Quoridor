@@ -36,6 +36,7 @@ class GameServerImplTest {
     private static class RecordingCallback implements ClientCallback {
         private final List<GameStateDTO> states = new ArrayList<>();
         private final List<Integer> winners = new ArrayList<>();
+        private final List<String> messages = new ArrayList<>();
         private int starts;
         volatile String failOn = "";
 
@@ -64,8 +65,19 @@ class GameServerImplTest {
         }
 
         @Override
-        public void onMessage(String message) throws RemoteException {
+        public synchronized void onMessage(String message) throws RemoteException {
             failIf("onMessage");
+            messages.add(message);
+            notifyAll();
+        }
+
+        synchronized void awaitMessage(String text) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (messages.stream().noneMatch(message -> message.contains(text))) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) { fail("Não recebeu a mensagem: " + text); }
+                TimeUnit.NANOSECONDS.timedWait(this, remaining);
+            }
         }
 
         synchronized GameStateDTO awaitState(Predicate<GameStateDTO> predicate) throws InterruptedException {
@@ -249,11 +261,16 @@ class GameServerImplTest {
     void victoryNotifiesAllRemainingClientsAndRejectsFurtherMoves() throws Exception {
         try (GameServerImpl server = new GameServerImpl()) {
             RecordingCallback[] callbacks = joinFour(server);
-            server.leave(1);
             server.leave(2);
             server.leave(3);
+            // Mantém dois jogadores ativos para testar vitória por chegada ao objetivo.
+            // Com apenas um, a nova regra já encerraria a partida por desconexão.
             server.move(0, 0, 3);
-            for (int row = 1; row <= 8; row++) { server.move(0, row, 3); }
+            server.move(1, 8, 5);
+            for (int row = 1; row <= 8; row++) {
+                server.move(0, row, 3);
+                if (row < 8) { server.move(1, 8, row % 2 == 1 ? 4 : 5); }
+            }
             callbacks[0].awaitWinner(0);
             GameStateDTO won = callbacks[0].awaitState(dto -> Integer.valueOf(0).equals(dto.winnerId()));
             assertNull(won.currentPlayerId());
@@ -261,7 +278,202 @@ class GameServerImplTest {
             assertTrue(assertThrows(GameException.class, () -> server.move(0, 7, 3))
                     .getMessage().contains("já terminou"));
             assertThrows(GameException.class, () -> server.placeWall(0, 3, 3, WallOrientation.HORIZONTAL));
+            // Uma vitória normal também permite reset e nova partida sem reiniciar a JVM.
+            server.leave(0);
+            server.leave(1);
+            RecordingCallback[] next = joinFour(server);
+            assertNull(next[0].awaitState(GameStateDTO::started).winnerId());
+            server.move(0, 1, 4);
         }
+    }
+
+    @Test
+    void threePlayersStayInLobbyAndReceiveCountOnEveryEntryAndExit() throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback observer = new RecordingCallback();
+            server.join("Primeiro", observer);
+            observer.awaitMessage("Aguardando jogadores (1/4)");
+            server.join("Segundo", new RecordingCallback());
+            observer.awaitMessage("Aguardando jogadores (2/4)");
+            server.join("Terceiro", new RecordingCallback());
+            observer.awaitMessage("Aguardando jogadores (3/4)");
+            GameStateDTO state = observer.awaitState(dto -> dto.version() == 3);
+            assertFalse(state.started()); assertNull(state.currentPlayerId()); assertEquals(0, observer.starts);
+            assertTrue(assertThrows(GameException.class, () -> server.move(0, 1, 4)).getMessage().contains("(3/4)"));
+            assertTrue(assertThrows(GameException.class, () -> server.placeWall(0, 2, 2, WallOrientation.HORIZONTAL))
+                    .getMessage().contains("(3/4)"));
+            server.leave(1);
+            GameStateDTO afterLeave = observer.awaitState(dto -> dto.version() == 4);
+            assertFalse(afterLeave.started()); assertEquals(0, observer.starts);
+            synchronized (observer) { assertTrue(observer.messages.get(observer.messages.size() - 1).contains("(2/4)")); }
+        }
+    }
+
+    @Test
+    void fifthPlayerIsClearlyRejectedWithoutDisruptingGame() throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback[] callbacks = joinFour(server);
+            assertTrue(assertThrows(GameException.class, () -> server.join("Quinto", new RecordingCallback()))
+                    .getMessage().toLowerCase().contains("partida cheia"));
+            server.move(0, 1, 4);
+            assertEquals(1, callbacks[0].awaitState(dto -> dto.version() == 5).currentPlayerId());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void everyoneLeavingResetsLobbyAndAllGameData(boolean startFirstGame) throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback observer = new RecordingCallback();
+            server.join("Antigo 0", observer);
+            server.join("Antigo 1", new RecordingCallback());
+            server.join("Antigo 2", new RecordingCallback());
+            if (startFirstGame) {
+                server.join("Antigo 3", new RecordingCallback());
+                server.placeWall(0, 3, 0, WallOrientation.HORIZONTAL);
+                server.move(1, 7, 4);
+            }
+            long previousVersion = startFirstGame ? 6 : 3;
+            observer.awaitState(dto -> dto.version() == previousVersion);
+            for (int id = 0; id < (startFirstGame ? 4 : 3); id++) { server.leave(id); }
+            RecordingCallback[] next = joinFour(server);
+            GameStateDTO fresh = next[0].awaitState(GameStateDTO::started);
+            assertTrue(fresh.version() > previousVersion);
+            assertTrue(fresh.walls().isEmpty()); assertNull(fresh.winnerId()); assertEquals(0, fresh.currentPlayerId());
+            int[][] initial = {{0, 4}, {8, 4}, {4, 8}, {4, 0}};
+            for (int id = 0; id < 4; id++) {
+                var player = fresh.players().get(id);
+                assertEquals(id, player.id()); assertEquals("Jogador " + id, player.name());
+                assertEquals(5, player.wallsRemaining()); assertTrue(player.connected());
+                assertEquals(initial[id][0], player.row()); assertEquals(initial[id][1], player.column());
+            }
+            server.move(0, 1, 4);
+            next[0].awaitState(dto -> dto.players().get(0).row() == 1);
+        }
+    }
+
+    @Test
+    void threeDeparturesDeclareLastPlayerWinnerOnceWithReason() throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback[] callbacks = joinFour(server);
+            server.leave(1);
+            assertNull(callbacks[0].awaitState(dto -> dto.version() == 5).winnerId());
+            server.leave(2);
+            assertNull(callbacks[0].awaitState(dto -> dto.version() == 6).winnerId());
+            server.move(0, 1, 4); // Com dois conectados, a partida continua.
+            assertEquals(3, callbacks[0].awaitState(dto -> dto.version() == 7).currentPlayerId());
+            server.leave(3);
+            callbacks[0].awaitWinner(0);
+            callbacks[0].awaitMessage("demais jogadores desconectaram");
+            GameStateDTO ended = callbacks[0].awaitState(dto -> dto.version() == 8);
+            assertEquals(0, ended.winnerId()); assertNull(ended.currentPlayerId());
+            synchronized (callbacks[0]) { assertEquals(List.of(0), callbacks[0].winners); }
+            assertThrows(GameException.class, () -> server.move(0, 2, 4));
+            assertThrows(GameException.class, () -> server.placeWall(0, 3, 3, WallOrientation.VERTICAL));
+            server.leave(0);
+            joinFour(server);
+            server.move(0, 1, 4);
+        }
+    }
+
+    @Test
+    void callbackFailuresAlsoDeclareLastPlayerWinner() throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback[] callbacks = joinFour(server);
+            for (int id = 1; id < 4; id++) { callbacks[id].failOn = "onStateUpdate"; }
+            server.move(0, 1, 4);
+            callbacks[0].awaitWinner(0);
+            callbacks[0].awaitMessage("demais jogadores desconectaram");
+            GameStateDTO ended = callbacks[0].awaitState(dto -> dto.winnerId() != null);
+            assertEquals(1, ended.players().stream().filter(GameStateDTO.PlayerDTO::connected).count());
+        }
+    }
+
+    @Test
+    void allCallbacksFailingResetServerForNewPlayers() throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback[] callbacks = joinFour(server);
+            for (RecordingCallback callback : callbacks) { callback.failOn = "onMessage"; }
+            server.leave(0); // Notifica os demais, que também cairão nos callbacks.
+            RecordingCallback fresh = new RecordingCallback();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (true) {
+                try { assertEquals(0, server.join("Nova geração", fresh)); break; }
+                catch (GameException stillDisconnecting) {
+                    if (System.nanoTime() >= deadline) { throw stillDisconnecting; }
+                    TimeUnit.MILLISECONDS.sleep(10);
+                }
+            }
+            GameStateDTO lobby = fresh.awaitState(dto -> dto.players().get(0).joined());
+            assertFalse(lobby.started()); assertNull(lobby.winnerId()); assertTrue(lobby.walls().isEmpty());
+            for (int id = 1; id < 4; id++) { assertEquals(id, server.join("Novo " + id, new RecordingCallback())); }
+            fresh.awaitState(GameStateDTO::started);
+            server.move(0, 1, 4);
+        }
+    }
+
+    @Test
+    void leavingLobbyReusesSameIdAndSideWithoutStartingEarly() throws Exception {
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback first = new RecordingCallback();
+            server.join("Primeiro", first); server.join("Sai", new RecordingCallback()); server.join("Terceiro", new RecordingCallback());
+            server.leave(1);
+            assertEquals(1, server.join("Substituto", new RecordingCallback()));
+            GameStateDTO lobby = first.awaitState(dto -> dto.version() == 5);
+            assertFalse(lobby.started()); assertEquals("SOUTH", lobby.players().get(1).side());
+            assertEquals("Substituto", lobby.players().get(1).name());
+            assertEquals(8, lobby.players().get(1).row()); assertEquals(4, lobby.players().get(1).column());
+            assertEquals(3, server.join("Quarto", new RecordingCallback()));
+            first.awaitState(GameStateDTO::started); server.move(0, 1, 4);
+        }
+    }
+
+    @Test
+    void failureFromOldSessionCannotDisconnectNewGenerationAfterReset() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback delayed = new RecordingCallback() {
+                @Override public void onMessage(String message) throws RemoteException {
+                    entered.countDown();
+                    try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+                    throw new RemoteException("Falha antiga depois do reset");
+                }
+            };
+            server.join("Antigo", delayed);
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            for (int id = 1; id < 4; id++) { server.join("Antigo " + id, new RecordingCallback()); }
+            for (int id = 0; id < 4; id++) { server.leave(id); }
+            RecordingCallback fresh = new RecordingCallback();
+            server.join("Novo", fresh);
+            for (int id = 1; id < 4; id++) { server.join("Novo " + id, new RecordingCallback()); }
+            release.countDown();
+            GameStateDTO state = fresh.awaitState(GameStateDTO::started);
+            assertTrue(state.players().stream().allMatch(GameStateDTO.PlayerDTO::connected));
+            server.move(0, 1, 4);
+            fresh.awaitState(dto -> dto.players().get(0).row() == 1);
+        } finally { release.countDown(); }
+    }
+
+    @Test
+    void concurrentDeparturesAndMoveProduceOnlyOneWinner() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(3);
+        try (GameServerImpl server = new GameServerImpl()) {
+            RecordingCallback[] callbacks = joinFour(server);
+            server.leave(1);
+            CountDownLatch start = new CountDownLatch(1);
+            Future<?> leaveTwo = pool.submit(() -> { start.await(); server.leave(2); return null; });
+            Future<?> leaveThree = pool.submit(() -> { start.await(); server.leave(3); return null; });
+            Future<?> move = pool.submit(() -> {
+                start.await();
+                try { server.move(0, 1, 4); } catch (GameException endedOrTurnChanged) { /* Recusa válida na corrida. */ }
+                return null;
+            });
+            start.countDown();
+            leaveTwo.get(5, TimeUnit.SECONDS); leaveThree.get(5, TimeUnit.SECONDS); move.get(5, TimeUnit.SECONDS);
+            callbacks[0].awaitWinner(0);
+            synchronized (callbacks[0]) { assertEquals(List.of(0), callbacks[0].winners); }
+            assertThrows(GameException.class, () -> server.move(0, 2, 4));
+        } finally { pool.shutdownNow(); }
     }
 
     @Test

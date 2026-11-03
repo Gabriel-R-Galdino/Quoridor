@@ -130,4 +130,80 @@ class ClientProcessIntegrationTest {
             }
         }
     }
+
+    @Test
+    void terminalClientsRespectLobbyLastPlayerVictoryAndReset() throws Exception {
+        List<Child> clients = new ArrayList<>();
+        try (Child server = new Child("server.ServerMain")) {
+            try {
+                server.await("Servidor RMI disponível em localhost:1099", 0);
+                String[] names = {"Ana", "Bruno", "Carla", "Davi"};
+                for (int id = 0; id < 3; id++) {
+                    Child client = joinTerminal(clients, names[id], id);
+                    client.await("Aguardando jogadores (" + (id + 1) + "/4)", 0);
+                }
+                Child first = clients.get(0);
+                first.await("Aguardando jogadores (3/4)", 0);
+                first.await("Movimentos e paredes bloqueados", 0);
+                int waiting = first.mark();
+                first.send("m s");
+                first.await("Aguardando os quatro jogadores e o estado inicial.", waiting);
+                waiting = first.mark();
+                first.send("p 3 0 h");
+                first.await("Aguardando os quatro jogadores e o estado inicial.", waiting);
+
+                joinTerminal(clients, names[3], 3);
+                for (Child client : clients) { client.await("A partida começou!", 0); client.await("Turno: [A] Ana.", 0); }
+                try (Child fifth = new Child("client.ClientMain")) {
+                    fifth.await("Nome do jogador:", 0); fifth.send("Quinto");
+                    fifth.await("Entrada recusada pelo servidor: Partida cheia", 0);
+                    fifth.exited();
+                }
+
+                // Deixa uma parede na primeira partida para exercitar o reset de estado.
+                first.send("p 3 0 h");
+                clients.get(1).await("Turno: [B] Bruno.", 0);
+                clients.get(1).send("q"); clients.get(1).exited();
+                first.await("Turno: [C] Carla.", 0);
+                clients.get(2).send("q"); clients.get(2).exited();
+                first.await("Turno: [D] Davi.", 0);
+                clients.get(3).send("q"); clients.get(3).exited();
+                first.await("demais jogadores desconectaram", 0);
+                first.await("Fim do jogo! Vencedor: [A] Ana.", 0);
+                first.await("Você venceu!", 0);
+                first.await("o servidor não precisa reiniciar", 0);
+                int ended = first.mark();
+                first.send("m s");
+                first.await("A partida terminou. Digite q para sair.", ended);
+                first.send("q"); first.exited();
+                server.await("[RESET]", 0);
+
+                // Mantém o MESMO processo servidor e abre uma segunda geração de clientes.
+                int secondRound = clients.size();
+                for (int id = 0; id < 4; id++) { joinTerminal(clients, "Novo " + names[id], id); }
+                Child nextFirst = clients.get(secondRound);
+                nextFirst.await("[A] Novo Ana (norte): 5 paredes [você]", 0);
+                for (int id = 0; id < 4; id++) {
+                    clients.get(secondRound + id).await("Turno: [A] Novo Ana.", 0);
+                }
+                nextFirst.send("m s");
+                clients.get(secondRound + 1).await("Turno: [B] Novo Bruno.", 0);
+                server.await("Jogador 0 moveu para (1,4)", 0);
+                for (int id = 0; id < 4; id++) { clients.get(secondRound + id).send("q"); }
+                for (int id = 0; id < 4; id++) { clients.get(secondRound + id).exited(); }
+            } finally {
+                for (Child client : clients) { client.close(); }
+            }
+        }
+    }
+
+    /** Cada chamada inicia outra JVM do cliente de terminal, não um cliente simulado. */
+    private static Child joinTerminal(List<Child> clients, String name, int expectedId) throws Exception {
+        Child client = new Child("client.ClientMain", "localhost");
+        clients.add(client);
+        client.await("Nome do jogador:", 0);
+        client.send(name);
+        client.await("Você é o jogador [" + (char) ('A' + expectedId) + "], ID " + expectedId, 0);
+        return client;
+    }
 }

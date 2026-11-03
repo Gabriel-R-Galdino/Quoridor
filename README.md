@@ -1,12 +1,60 @@
 # Quoridor distribuído para 4 jogadores
 
-Trabalho de Sistemas Distribuídos com interface de terminal. O motor de regras, os contratos compartilhados, o servidor RMI e o cliente de terminal estão implementados e testados. A partida usa um servidor e quatro clientes em cinco processos Java separados.
+- **Aluno:** Gabriel Rosa Galdino
+- **Matrícula:** 202320098
+- **Disciplina:** Sistemas Distribuídos
+
+Trabalho de Sistemas Distribuídos com servidor Java RMI e clientes de terminal ou Swing. O motor de regras, os contratos compartilhados e os dois clientes estão implementados e testados. A partida usa um servidor e quatro clientes em cinco processos Java separados; os dois tipos de cliente podem jogar juntos.
+
+## Compilar no Terminal
+
+Instale um **JDK 17 ou superior** e o **Maven**. Confira se `java`, `javac` e `mvn` funcionam no terminal. Abra um terminal na raiz do projeto e execute o mesmo comando no Windows, Linux ou macOS:
+
+```text
+mvn clean package
+```
+
+O Maven compila, roda os testes e cria `target/quoridor-distribuido-0.1.0-SNAPSHOT.jar`. Na primeira execução, ele precisa baixar os plugins e o JUnit. Deixe a porta **1099** livre durante a compilação, pois os testes de integração iniciam um servidor RMI local. Se alterar o código depois, compile novamente antes de jogar.
+
+## Jogar pelo terminal
+
+Após compilar, abra **cinco terminais** na raiz do projeto. No primeiro, inicie o servidor e deixe-o aberto:
+
+```text
+java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar server.ServerMain
+```
+
+Em **cada um** dos outros quatro terminais, inicie um cliente:
+
+```text
+java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar client.ClientMain
+```
+
+Cada cliente pede o nome do jogador no próprio terminal. A partida começa quando o quarto jogador entra. Digite `q` para sair de um cliente e use Ctrl+C no terminal do servidor para encerrá-lo. Os comandos de jogada estão na seção [Comandos do cliente de terminal](#comandos-do-cliente-de-terminal).
+
+## Jogar em modo gráfico
+
+Após compilar, abra **cinco terminais** na raiz do projeto. No primeiro, inicie o servidor e deixe-o aberto:
+
+```text
+java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar server.ServerMain
+```
+
+Em **cada um** dos outros quatro terminais, execute o cliente gráfico. Cada comando abre uma janela Swing para um jogador:
+
+```text
+java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar client.gui.GuiClientMain
+```
+
+Na janela de cada cliente, informe o nome e mantenha o host `localhost`. A partida começa quando o quarto jogador entra. Para sair, use “Sair da partida” ou feche a janela; Ctrl+C encerra o servidor. O modo gráfico precisa de um ambiente de desktop. Veja os controles em [Cliente gráfico Swing](#cliente-gráfico-swing).
+
+Os comandos são iguais no Windows, Linux e macOS. Os dois modos usam o **mesmo servidor** e podem ser combinados: por exemplo, dois clientes de terminal e dois gráficos. O total continua sendo quatro clientes, cada um em seu processo. Após todos os clientes saírem, o servidor volta ao lobby e aceita outra partida sem reiniciar. O JAR não possui manifesto para `java -jar`; por isso os comandos informam a classe principal.
 
 ## Tecnologias e requisitos
 
 - Java 17 ou superior e Maven.
 - Nenhuma dependência externa da aplicação: apenas o JDK. JUnit 5 é uma dependência exclusiva de testes; os plugins Maven são ferramentas de build.
-- Cinco processos separados: um servidor e quatro clientes, um por jogador.
+- Cinco processos separados: um servidor e quatro clientes, um por jogador, com interface de terminal ou Swing.
 - Todos os processos na mesma máquina, usando `localhost`.
 - Toda a comunicação entre processos via Java RMI, incluindo callbacks do servidor para os clientes.
 - É proibido usar diretamente `java.net.Socket` ou `java.net.ServerSocket` no código da aplicação.
@@ -16,10 +64,6 @@ Trabalho de Sistemas Distribuídos com interface de terminal. O motor de regras,
 ```text
 pom.xml
 APRESENTACAO.md
-scripts/
-├── compilar.bat / compilar.sh
-├── iniciar-servidor.bat / iniciar-servidor.sh
-└── iniciar-cliente.bat / iniciar-cliente.sh
 src/main/java/
 ├── model/
 │   ├── Board.java
@@ -41,12 +85,10 @@ src/main/java/
     ├── ClientMain.java
     ├── ClientCallbackImpl.java
     ├── TerminalCommand.java
-    └── TerminalUI.java
+    ├── TerminalUI.java
+    └── gui/ (cliente Swing, sessão, callbacks e dicas visuais)
 
-src/test/java/model/QuoridorRulesTest.java
-src/test/java/server/GameServerImplTest.java
-src/test/java/client/TerminalUITest.java
-src/test/java/client/ClientProcessIntegrationTest.java
+src/test/java/ (regras, servidor, terminal, integração entre processos e Swing)
 ```
 
 | Pacote | Responsabilidade |
@@ -54,104 +96,82 @@ src/test/java/client/ClientProcessIntegrationTest.java
 | `model` | Estado e regras puras, sem RMI ou interface. |
 | `common` | Interfaces remotas e DTOs serializáveis compartilhados. |
 | `server` | Registry, partida autoritativa, validação e notificações. |
-| `client` | Conexão, exportação do callback e interface de caracteres. |
+| `client` | Conexão, exportação do callback e interface de terminal. |
+| `client.gui` | Interface Swing e dicas calculadas a partir do DTO; o servidor continua decidindo as jogadas. |
 
-## Como rodar com os scripts
+## Arquitetura
 
-Instale um **JDK 17+** e o **Maven**, com `java`, `javac` e `mvn` no `PATH`. Na primeira compilação, o Maven precisa baixar seus plugins e o JUnit. A aplicação usa somente o JDK em execução.
-
-Compile **antes** de iniciar a partida. O script executa `mvn package`, incluindo os testes e a geração do JAR. Deixe a porta 1099 livre, pois um teste inicia um servidor real. Os scripts localizam a raiz pelo próprio caminho e podem ser chamados de outras pastas; os exemplos abaixo partem da raiz do repositório.
-
-### Windows — PowerShell ou Prompt de Comando
-
-Compile uma vez:
-
-```text
-.\scripts\compilar.bat
+```mermaid
+flowchart LR
+    subgraph clientes["Quatro JVMs de clientes · localhost"]
+        direction TB
+        C1["Cliente A · terminal ou Swing"]
+        C2["Cliente B · terminal ou Swing"]
+        C3["Cliente C · terminal ou Swing"]
+        C4["Cliente D · terminal ou Swing"]
+    end
+    subgraph servidor["JVM do servidor · localhost"]
+        direction TB
+        B["ServerMain<br/>inicia e publica o serviço"]
+        R["Registry RMI :1099<br/>QuoridorService"]
+        S["GameServerImpl<br/>estado sincronizado"]
+        M["QuoridorRules<br/>modelo e validação"]
+        Q["Fila única de notificações"]
+        B --> R
+        B --> S
+        S --> M
+        S --> Q
+    end
+    C1 & C2 & C3 & C4 -- "lookup inicial" --> R
+    C1 & C2 & C3 & C4 -- "jogadas via GameService" --> S
+    Q -- "callbacks RMI · ClientCallback" --> C1 & C2 & C3 & C4
 ```
 
-No **terminal 1**, inicie o servidor:
-
-```text
-.\scripts\iniciar-servidor.bat
-```
-
-Nos **terminais 2, 3, 4 e 5**, execute uma vez em cada terminal:
-
-```text
-.\scripts\iniciar-cliente.bat
-```
-
-### Linux/macOS — shell
-
-Compile uma vez:
-
-```sh
-sh scripts/compilar.sh
-```
-
-No **terminal 1**, inicie o servidor:
-
-```sh
-sh scripts/iniciar-servidor.sh
-```
-
-Nos **terminais 2, 3, 4 e 5**, execute uma vez em cada terminal:
-
-```sh
-sh scripts/iniciar-cliente.sh
-```
-
-Cada cliente pede o nome do jogador. A quarta entrada inicia a partida. Os scripts mantêm o processo no terminal atual, permitindo ver as mensagens e digitar comandos; não abrem terminais adicionais. Há cinco processos da aplicação: um servidor e quatro clientes.
-
-O cliente usa `localhost` por padrão. Pode ser informado explicitamente com `.\scripts\iniciar-cliente.bat localhost` ou `sh scripts/iniciar-cliente.sh localhost`. Os scripts de início avisam se o JAR estiver ausente; depois de mudar o código, compile novamente para atualizar o JAR.
-
-Use `q` para sair de um cliente e Ctrl+C para encerrar o servidor. Para uma nova partida, encerre os processos anteriores e inicie novamente o servidor e os quatro clientes. O servidor mantém uma única partida por execução.
-
-`compilar.bat` e `compilar.sh` encaminham argumentos adicionais ao Maven; por exemplo, `.\scripts\compilar.bat -o` usa o cache já disponível, sem baixar artefatos. A execução dos testes em cinco processos exige que o ambiente permita conexões RMI em localhost.
-
-## Diagrama da arquitetura em texto
-
-```text
-Mesma máquina (localhost)
-
-JVM 1: Cliente A -- stub GameService --+
-JVM 2: Cliente B -- stub GameService --+
-JVM 3: Cliente C -- stub GameService --+-- chamadas RMI --> JVM 5: Servidor
-JVM 4: Cliente D -- stub GameService --+                    |
-                                                         +-- Registry :1099
-                                                         |   QuoridorService
-                                                         +-- GameServerImpl
-                                                         |   estado sincronizado
-                                                         +-- QuoridorRules / model
-                                                         +-- fila de notificações
-
-JVMs 1 a 4: ClientCallbackImpl <--- callbacks RMI -------- fila de notificações
-                 |
-                 +-- fila de eventos da TerminalUI --> desenho ASCII e mensagens
-```
-
-O Registry está dentro da JVM do servidor. Cada cliente consulta `QuoridorService` para obter seu stub; depois, as jogadas vão ao objeto remoto do serviço. Cada cliente também exporta seu próprio callback e passa o stub dele ao servidor em `join`. Os callbacks retornam diretamente aos objetos remotos dos clientes. As portas dos objetos exportados são escolhidas pelo RMI; a 1099 é a porta do catálogo Registry.
+O Registry está dentro da JVM do servidor. Cada cliente consulta `QuoridorService` para obter o stub; depois, as jogadas vão diretamente ao serviço remoto. Cada cliente exporta seu callback e passa o stub dele ao servidor em `join`. O servidor envia notificações diretamente aos callbacks dos clientes. A porta 1099 é a do Registry; o RMI escolhe as portas dos objetos exportados. No terminal, o callback entrega eventos à fila da `TerminalUI`; no Swing, entrega eventos à thread de interface.
 
 ## Fluxo de uma jogada
 
-```text
-cliente -> stub GameService -> servidor -> validação -> estado oficial
-                                                    -> fila de callbacks
-                                                    -> stubs ClientCallback
-                                                    -> clientes redesenham o DTO
+```mermaid
+sequenceDiagram
+    actor Jogador
+    participant Cliente as Cliente (terminal ou Swing)
+    participant Servico as GameServerImpl (RMI)
+    participant Regras as QuoridorRules
+    participant Fila as Fila de notificações
+    participant Outros as Callbacks dos clientes
+    Jogador->>Cliente: escolhe movimento ou parede
+    Cliente->>Servico: move(...) ou placeWall(...)
+    Servico->>Servico: confere sessão, início e turno
+    Servico->>Regras: valida e tenta aplicar jogada
+    alt jogada inválida
+        Regras-->>Servico: recusada
+        Servico-->>Cliente: GameException
+        Cliente-->>Jogador: mostra o motivo
+    else jogada válida
+        Regras-->>Servico: estado atualizado
+        Servico->>Servico: incrementa versão e cria DTO
+        Servico->>Fila: enfileira mensagem e DTO
+        Servico-->>Cliente: retorno da chamada RMI
+        Fila->>Outros: onMessage e onStateUpdate
+        opt vitória
+            Fila->>Outros: onGameOver
+        end
+        Outros-->>Jogador: interfaces atualizam o tabuleiro
+    end
 ```
 
-1. `TerminalUI.handleCommand` interpreta a entrada com `TerminalCommand`. Por exemplo, `m s` do jogador A na posição inicial pede o destino `(1,4)`.
+1. O cliente converte a ação em um destino ou em uma parede. No terminal, `TerminalUI.handleCommand` interpreta `m s` como o destino `(1,4)` para o jogador A na posição inicial; no Swing, o jogador pode clicar na casa destacada.
 2. O cliente chama `GameService.move(0,1,4)` no stub. O RMI transporta a invocação até `GameServerImpl.move`.
 3. Sob `synchronized`, `requireTurn` verifica registro, início da partida, vencedor e turno. `QuoridorRules.tryMove` verifica paredes, ocupação e regras de movimento.
 4. Se houver recusa, o servidor lança `GameException`; o cliente apresenta a mensagem e permite corrigir o comando. Nada é alterado no estado oficial.
 5. Se a jogada for aceita, o servidor altera o estado, avança o turno ou detecta vitória, incrementa a versão e captura um `GameStateDTO` imutável.
 6. `publish` enfileira as notificações. A chamada remota retorna sem esperar a entrega de todos os callbacks.
 7. Fora do monitor do estado, a fila chama `onMessage` e `onStateUpdate` nos stubs de callback dos jogadores conectados; após uma vitória, também chama `onGameOver`.
-8. `ClientCallbackImpl` coloca eventos na fila da interface. `TerminalUI` descarta versões antigas e redesenha o tabuleiro. Uma falha de callback faz o servidor desconectar aquele jogador e publicar a nova situação.
+8. O cliente de terminal coloca os eventos em sua fila; o Swing os entrega à thread de interface. Ambos atualizam o tabuleiro com o DTO. Uma falha de callback faz o servidor desconectar aquele jogador e publicar a nova situação.
 
 Pedidos de parede seguem o mesmo fluxo, usando `placeWall` e `QuoridorRules.tryPlaceWall`, com verificação de sobreposição, cruzamento, inventário e BFS para os quatro objetivos.
+
+O retorno da chamada RMI e a entrega dos callbacks são assíncronos entre si: uma atualização pode chegar ao cliente antes do retorno da jogada.
 
 ## Motor de regras implementado
 
@@ -198,7 +218,32 @@ Cada cliente é iniciado em sua própria JVM, consulta o Registry em `localhost:
 | `placeWall(playerId, linha, coluna, orientation)` | Valida uma parede em interseção de 0 a 7, com `WallOrientation`. |
 | `leave(playerId)` | Libera a vaga antes do início; durante a partida, desconecta e preserva o peão. |
 
-Todas as operações declaram `RemoteException` para falhas de comunicação e `GameException` para recusas do jogo. Uma recusa traz uma mensagem clara em português e não altera o turno nem os recursos. Depois do início, não há entrada de novos jogadores nem reconexão nesta versão. Após a vitória, jogadas são recusadas.
+Todas as operações declaram `RemoteException` para falhas de comunicação e `GameException` para recusas do jogo. Uma recusa traz uma mensagem clara em português e não altera o turno nem os recursos. Depois do início, não há reposição de jogadores nessa partida. Após a vitória, jogadas são recusadas; novas entradas ficam disponíveis quando todos saem e o servidor volta ao lobby.
+
+### Ciclo de vida: lobby → em andamento → fim → reset
+
+```mermaid
+stateDiagram-v2
+    [*] --> Lobby
+    Lobby --> Lobby: entrada ou saída com menos de 4 conectados
+    Lobby --> EmAndamento: quarta entrada
+    EmAndamento --> EmAndamento: jogada ou saída com 2 ou 3 conectados
+    EmAndamento --> Fim: peão chega ao objetivo
+    EmAndamento --> Fim: resta 1 conectado
+    Lobby --> Reset: último cliente sai
+    Fim --> Reset: último cliente sai
+    Reset --> Lobby: limpa partida no mesmo servidor RMI
+    state "Em andamento" as EmAndamento
+    state "Fim" as Fim
+    state "Reset" as Reset
+```
+
+- **Lobby:** a partida só começa com exatamente quatro jogadores registrados. Enquanto o lobby permanece aberto, cada entrada ou saída notifica os conectados com `Aguardando jogadores (N/4)` e um DTO atualizado. Terminal e Swing mostram a contagem e bloqueiam pedidos de jogada até o início; o servidor também os recusa. Uma saída no lobby libera a vaga e conserva a relação ID/cor/lado para o substituto. O quinto jogador recebe `Partida cheia`.
+- **Em andamento:** com dois ou três conectados, o jogo continua. Os turnos dos desconectados são pulados e seus peões permanecem como obstáculos. Se o jogador da vez sair ou falhar em um callback, o turno passa imediatamente ao próximo conectado.
+- **Fim:** vence quem chega ao objetivo ou o único conectado restante. Na vitória por desconexão, o servidor envia o motivo `demais jogadores desconectaram` por `onMessage`, o DTO final com `winnerId` e turno nulo, e `onGameOver(id)`. As assinaturas remotas não foram alteradas. Uma vitória já declarada não é substituída por saídas posteriores.
+- **Reset:** ao chegar a zero conectados, seja por `leave` ou falhas de callback, o servidor descarta o motor anterior e limpa sessões, nomes e vencedor. O tabuleiro, inventários e turnos voltam ao estado inicial; novos jogadores recebem novamente IDs de 0 a 3. Isso vale para lobby vazio e partidas terminadas, inclusive por chegada ao objetivo. Registry e serviço permanecem publicados.
+
+Entradas, saídas, vitória e reset usam o mesmo monitor `synchronized` das jogadas. O vencedor por desconexão é parte do ciclo de vida do servidor; o motor de regras do tabuleiro continua inalterado. A versão dos DTOs cresce durante toda a execução do serviço, inclusive entre partidas. A fila confere a identidade da sessão antes de notificar ou tratar uma falha, impedindo que callbacks antigos afetem os novos ocupantes dos mesmos IDs. Callbacks continuam fora do monitor.
 
 O servidor confere registro, início da partida, vencedor e turno antes de usar o motor de regras. Seus métodos remotos são `synchronized` e protegem todo o estado da partida. As notificações usam uma fila única e ocorrem fora do monitor, preservando a ordem dos eventos sem manter o estado bloqueado durante uma chamada remota.
 
@@ -210,37 +255,24 @@ Se qualquer callback lançar `RemoteException`, o servidor registra o erro, desc
 
 O console registra entradas, início, movimentos, paredes, recusas, falhas de callback, desconexões, vitória e encerramento.
 
-## Compilação
+## Cliente gráfico Swing
 
-Na raiz, com Java 17+ e Maven instalados:
+Depois de abrir o cliente gráfico pelo passo a passo no início do README, use a janela para acompanhar o tabuleiro e enviar jogadas. O host padrão do Registry é `localhost`.
 
-```text
-mvn clean package
-```
+O painel desenha as 81 casas, os peões A–D em azul, vermelho, verde e roxo, as paredes e os quatro lados de objetivo em tons suaves. O painel lateral mostra nomes, cores, inventário, turno e mensagens. Um peão desconectado permanece no tabuleiro, marcado com um X.
 
-O resultado será `target/quoridor-distribuido-0.1.0-SNAPSHOT.jar`. No primeiro terminal, inicie o servidor:
+- **Movimento:** na sua vez, as casas possíveis ficam destacadas. Clique em uma delas, inclusive para saltos diagonais. As setas fazem movimentos ortogonais ou saltos retos.
+- **Parede:** ative “Modo parede”, escolha horizontal ou vertical e passe o mouse sobre uma borda interna. A prévia fica verde quando permitida pelo estado recebido e vermelha em caso de sobreposição, cruzamento, falta de paredes ou bloqueio de caminho. Clique na prévia verde para enviar o pedido.
+- **Turno:** os controles são desabilitados fora da sua vez e durante um pedido pendente. Ao fim da partida, um diálogo apresenta o vencedor.
+- **Saída:** use “Sair da partida” ou feche a janela; a sessão avisa `leave` em segundo plano e remove a exportação do callback.
 
-```text
-java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar server.ServerMain
-```
+`BoardHints` calcula apenas dicas visuais a partir do DTO, incluindo BFS para a prévia de paredes. Não altera o motor de regras nem aceita jogadas. Mesmo uma prévia verde depende da validação final do servidor, e uma recusa aparece no log sem encerrar o cliente.
 
-Em outros **quatro terminais**, execute uma vez em cada um:
+`GuiCallback` implementa o contrato `common.ClientCallback` e entrega **todos** os callbacks com `SwingUtilities.invokeLater`. `GameWindow` usa `SwingWorker` para conexão, jogadas e saída; `GuiSession` impede chamadas RMI na EDT. Nenhuma biblioteca externa foi adicionada. Terminal e Swing compartilham os contratos originais, exibem o lobby com contagem e respeitam o ciclo de vida do servidor.
 
-```text
-java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar client.ClientMain
-```
+Os testes do novo pacote verificam movimentos e BFS das dicas, entrada por mouse e setas, pintura em memória, entrega de callbacks na EDT e quatro sessões conectadas ao servidor existente. A imagem `target/gui-board-preview.png` é produzida pelo teste de pintura para inspeção visual.
 
-O cliente pede o nome do jogador e usa `localhost` por padrão. Para informar explicitamente o host do Registry:
-
-```text
-java -cp target/quoridor-distribuido-0.1.0-SNAPSHOT.jar client.ClientMain localhost
-```
-
-Ou, após `mvn compile`, use `java -cp target/classes server.ServerMain` e `java -cp target/classes client.ClientMain`. A porta 1099 precisa estar livre. O JAR não possui manifesto para `java -jar`; o ponto de entrada é informado pelo comando. Encerre o servidor com Ctrl+C.
-
-O host é um argumento de consulta ao Registry. Neste trabalho todos os processos ficam na mesma máquina, e os stubs de servidor e callbacks anunciam `localhost`; execução entre máquinas diferentes não é parte desta configuração.
-
-## Como jogar pelo terminal
+## Comandos do cliente de terminal
 
 Os símbolos são fixos: `A` norte (ID 0), `B` sul (ID 1), `C` leste (ID 2) e `D` oeste (ID 3). Não é necessário suporte a cores ou códigos ANSI. Cada atualização mostra o tabuleiro completo, nomes, quantidades de paredes, desconexões, jogador da vez e vencedor. `-` representa parede horizontal; `|` representa parede vertical. As coordenadas das casas e interseções seguem a convenção descrita no motor.
 
@@ -263,6 +295,12 @@ O callback apenas coloca eventos em uma fila. Um único laço imprime mensagens 
 
 Após a vitória, o vencedor aparece com símbolo e nome, e novos comandos de jogada são recusados. Digite `q` para encerrar. `q`, fechamento da entrada e Ctrl+C tentam avisar `leave` ao servidor e removem a exportação do callback.
 
+As regras de ciclo de vida também valem para o **cliente de terminal**: com um, dois ou três jogadores, ele mostra `Aguardando jogadores (N/4)` e bloqueia movimentos e paredes; um quinto cliente recebe a recusa do servidor. Se os demais desconectarem, o último jogador vê o motivo, o vencedor e `Você venceu!`. Depois que todos digitarem `q`, o servidor volta ao lobby limpo. Execute novamente o comando de `client.ClientMain` para a próxima partida, mantendo o mesmo servidor em execução.
+
+O teste `terminalClientsRespectLobbyLastPlayerVictoryAndReset` inicia clientes de terminal em JVMs separadas, verifica essas transições e executa uma segunda partida no mesmo processo servidor.
+
+## Testes
+
 Para executar somente os testes:
 
 ```text
@@ -271,20 +309,8 @@ mvn test
 
 Os testes cobrem as regras do modelo, o serviço e o cliente: início automático, recusas, snapshots serializáveis, desconexões, falhas nos quatro métodos de callback, vitória, concorrência, comandos, desenho, versões antigas e erros sem queda do terminal.
 
+Os testes de ciclo de vida também verificam três jogadores sem início, recusa do quinto, liberação de vaga no lobby, vitória do último conectado por saída ou falha de callback, nova partida com estado limpo após todas as saídas e proteção contra falhas atrasadas de uma sessão anterior. Há casos concorrentes de `move` com `leave`, além de testes da contagem e bloqueio de controles nos dois clientes.
+
 O teste RMI do servidor usa um Registry em porta dinâmica e quatro callbacks exportados. O teste `ClientProcessIntegrationTest` inicia **cinco JVMs separadas**, usa a porta 1099 e controla a entrada dos quatro clientes reais: verifica início, movimentos, parede, erro devolvido pelo servidor e saída com desconexão. Deixe a porta 1099 livre ao executar `mvn test`. Todos os processos criados pelo teste são encerrados ao final.
 
 Para a apresentação, use os cinco terminais acima e demonstre uma jogada recusada, um salto, uma parede e a saída de um jogador sem interromper os demais.
-
-## Revisão do requisito de comunicação
-
-A revisão dos arquivos Java de `src/main/java` e `src/test/java` não encontrou referências diretas a `java.net.Socket` ou `java.net.ServerSocket`, nem importações de `java.net`. Conexões, consulta ao Registry, exportações e callbacks usam a API `java.rmi`. O transporte interno do RMI é responsabilidade do JDK.
-
-Para repetir a busca com ripgrep, opcionalmente instalado:
-
-```sh
-rg -n 'java\.net|\bSocket\b|\bServerSocket\b' src -g '*.java'
-```
-
-Sem correspondências, `rg` retorna código 1. As menções neste README e no roteiro descrevem o requisito, não são código de comunicação.
-
-O roteiro com explicações de stub, Registry, callback, sincronização, desconexão e arquivos específicos está em [APRESENTACAO.md](APRESENTACAO.md).

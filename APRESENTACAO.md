@@ -101,7 +101,29 @@ Mostre estes caminhos:
 3. **Efeito no jogo:** `disconnect` chama `QuoridorRules.markDisconnected`; [GameState.java](src/main/java/model/GameState.java), método `advanceTurn`, pula jogadores desconectados. O peão permanece na casa como obstáculo.
 4. **Aviso aos demais:** uma nova versão do DTO é publicada, preservando o nome e indicando `connected = false` durante a partida.
 
-Antes do início, a vaga desconectada fica disponível. Depois do início, esta versão não admite novos jogadores ou reconexão. Uma queda é detectada ao tentar um callback; não há heartbeat. Se todos saírem, não há novo turno ativo. Se o servidor cair, o cliente apresenta o erro de comunicação e continua permitindo `q`.
+Antes do início, a vaga desconectada fica disponível, mantendo o mesmo ID, lado e cor para o substituto. Depois do início, não há reposição de jogadores nessa partida. Uma queda é detectada ao tentar um callback; não há heartbeat. Se o servidor cair, o cliente apresenta o erro de comunicação e continua permitindo `q`.
+
+### Ciclo de vida e vitória por desconexão
+
+```text
+LOBBY -- exatamente 4 entradas --> EM ANDAMENTO -- objetivo ou só 1 conectado --> FIM
+  ^                                    |                                        |
+  |                                    +------------ 0 conectados ---------------+
+  +----------------------- RESET (quando a sala fica vazia) <---------------------+
+```
+
+**Fala sugerida:** “Um, dois ou três jogadores permanecem no lobby. A contagem `Aguardando jogadores (N/4)` vai por `onMessage` a cada entrada e saída, e aparece nos dois clientes. O quarto inicia a partida; o quinto recebe `Partida cheia`. Além do bloqueio nos clientes, o servidor rejeita jogadas anteriores ao início.”
+
+Abra `GameServerImpl.join`, `requireTurn`, `disconnect`, `resetLobby` e `snapshot`, em [GameServerImpl.java](src/main/java/server/GameServerImpl.java):
+
+- `disconnect` calcula quantos ainda estão conectados, sob o mesmo monitor das jogadas. Com dois ou três, continua a partida e usa `markDisconnected` para pular turnos, preservando os peões.
+- Se restar um conectado e ainda não houver vencedor, o campo `winnerId` do servidor recebe seu ID. A regra de vitória por desconexão pertence ao servidor, e não exige modificar o motor do tabuleiro.
+- `publish` envia o motivo “demais jogadores desconectaram” em `onMessage`, seguido do DTO final e `onGameOver(id)`, todos pela fila, fora do monitor. Assim, as interfaces em `common` permanecem iguais.
+- Se já havia vencedor por chegada ao objetivo ou desconexão, as saídas seguintes não alteram o resultado.
+- Quando a contagem chega a zero, `resetLobby` cria um novo `QuoridorRules`, limpa sessões e nomes, remove o vencedor e define `started = false`. O mesmo serviço e o Registry continuam atendendo. Os próximos quatro entram com IDs 0 a 3, cinco paredes e posições iniciais.
+- A versão dos snapshots nunca é reiniciada dentro do serviço. Sessões são comparadas por identidade; uma falha atrasada de um callback da partida antiga não pode desconectar um novo jogador com o mesmo ID.
+
+Mostre `threePlayersStayInLobbyAndReceiveCountOnEveryEntryAndExit`, `everyoneLeavingResetsLobbyAndAllGameData`, `threeDeparturesDeclareLastPlayerWinnerOnceWithReason`, `allCallbacksFailingResetServerForNewPlayers` e `failureFromOldSessionCannotDisconnectNewGenerationAfterReset` em [GameServerImplTest.java](src/test/java/server/GameServerImplTest.java). O teste de vitória por chegada mantém dois jogadores ativos, para que a partida não termine antes por desconexão.
 
 ## 8. Demonstração curta e reproduzível
 
@@ -114,7 +136,10 @@ Compile antes de iniciar o servidor. Abra um terminal para o servidor e quatro p
 5. Davi: `q`. Mostre o log de desconexão, o peão D preservado e o turno de Ana.
 6. Ana: `p 3 0 h`. A sobreposição é recusada pelo servidor; a aplicação e o turno permanecem ativos.
 7. Ana: `m s`. A jogada é aceita, demonstrando a continuidade após o erro.
-8. Encerre os demais clientes com `q` e o servidor com Ctrl+C.
+8. Bruno e Carla: `q`. Mostre que Ana é declarada vencedora com o motivo “demais jogadores desconectaram”.
+9. Ana: `q`. Mostre o evento `RESET` no console do servidor.
+10. Sem reiniciar o servidor, abra quatro novos clientes e demonstre que a primeira entrada recebe ID 0, o lobby mostra a contagem e a nova partida começa sem paredes anteriores.
+11. Encerre os clientes e, por fim, o servidor com Ctrl+C.
 
 Para demonstrar saltos, fechamento de caminho e vitória sem uma partida longa, abra os cenários de [QuoridorRulesTest.java](src/test/java/model/QuoridorRulesTest.java). Mostre também [ClientProcessIntegrationTest.java](src/test/java/client/ClientProcessIntegrationTest.java): o teste inicia cinco processos reais e executa a sequência de comunicação.
 

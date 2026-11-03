@@ -90,6 +90,8 @@ public final class TerminalUI {
                 } else if (event instanceof OverEvent over) {
                     gameOver = true;
                     output.println("Fim do jogo! Vencedor: " + playerLabel(state, over.winner()) + ". Digite q para sair.");
+                    if (over.winner() == playerId) { output.println("Você venceu!"); }
+                    output.println("Para outra partida, todos devem sair com q e abrir os clientes novamente; o servidor não precisa reiniciar.");
                 } else if (event instanceof InputEvent command) {
                     running = handleCommand(service, command.line());
                 } else if (event instanceof EndInputEvent) {
@@ -127,7 +129,7 @@ public final class TerminalUI {
             }
             if (gameOver) { output.println("A partida terminou. Digite q para sair."); return true; }
             if (state == null || !state.started()) {
-                output.println("Aguardando os quatro jogadores e o estado inicial.");
+                output.println("Aguardando os quatro jogadores e o estado inicial. " + lobbyLabel(state));
                 return true;
             }
             if (!Integer.valueOf(playerId).equals(state.currentPlayerId())) {
@@ -196,7 +198,9 @@ public final class TerminalUI {
             text.append("PARTIDA ENCERRADA. Vencedor: ").append(playerLabel(state, state.winnerId()))
                     .append(". Digite q para sair.\n");
         } else if (!state.started()) {
-            text.append("Aguardando quatro jogadores para começar.\n");
+            text.append(lobbyLabel(state)).append('\n');
+            // O terminal continua lendo q, mas não envia movimento ou parede no lobby.
+            text.append("Movimentos e paredes bloqueados até a entrada dos quatro jogadores. Use q para sair.\n");
         } else {
             text.append(turnLabel(state)).append('\n');
             if (Integer.valueOf(localPlayerId).equals(state.currentPlayerId())) {
@@ -209,6 +213,11 @@ public final class TerminalUI {
     private static String turnLabel(GameStateDTO state) {
         return state.currentPlayerId() == null ? "Sem jogador da vez."
                 : "Turno: " + playerLabel(state, state.currentPlayerId()) + ".";
+    }
+
+    private static String lobbyLabel(GameStateDTO state) {
+        long connected = state == null ? 0 : state.players().stream().filter(GameStateDTO.PlayerDTO::connected).count();
+        return "Aguardando jogadores (" + connected + "/4).";
     }
 
     private static String playerLabel(GameStateDTO state, int id) {

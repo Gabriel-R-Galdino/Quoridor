@@ -188,6 +188,23 @@ class TerminalUITest {
     }
 
     @Test
+    void lastPlayerVictoryDisplaysReasonAndExplainsHowToStartAgain() throws Exception {
+        StringWriter text = new StringWriter();
+        TerminalUI ui = new TerminalUI(new StringReader("m s\np 2 3 h\nq\n"), new PrintWriter(text));
+        FakeService service = new FakeService();
+        ClientCallbackImpl callback = new ClientCallbackImpl(ui);
+        // Mantém a ordem utilizada pelo servidor: motivo, estado final, aviso de vitória.
+        callback.onMessage("Vencedor: jogador 0: demais jogadores desconectaram.");
+        callback.onStateUpdate(state(8, true, null, 0));
+        callback.onGameOver(0);
+        ui.run(service, 0);
+        assertTrue(text.toString().contains("demais jogadores desconectaram"));
+        assertTrue(text.toString().contains("Você venceu!"));
+        assertTrue(text.toString().contains("o servidor não precisa reiniciar"));
+        assertTrue(service.calls.isEmpty());
+    }
+
+    @Test
     void communicationFailureDoesNotCrashClient() throws Exception {
         StringWriter text = new StringWriter();
         TerminalUI ui = new TerminalUI(new StringReader("m s\nq\n"), new PrintWriter(text));
@@ -197,5 +214,18 @@ class TerminalUITest {
         ui.run(service, 0);
         assertTrue(text.toString().contains("Falha de comunicação"));
         assertTrue(text.toString().contains("Saindo do jogo."));
+    }
+
+    @Test
+    void lobbyDisplaysThreeOfFourAndDoesNotSendActions() throws Exception {
+        StringWriter text = new StringWriter();
+        TerminalUI ui = new TerminalUI(new StringReader("m s\np 2 3 h\nq\n"), new PrintWriter(text));
+        FakeService service = new FakeService();
+        // O snapshot de teste tem três jogadores conectados e nenhum turno ativo.
+        ui.onStateUpdate(state(3, false, null, null));
+        ui.run(service, 0);
+        assertTrue(text.toString().contains("Aguardando jogadores (3/4)"));
+        assertTrue(text.toString().contains("Movimentos e paredes bloqueados"));
+        assertTrue(service.calls.isEmpty());
     }
 }
