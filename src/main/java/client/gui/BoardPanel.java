@@ -10,8 +10,8 @@ import java.util.Set;
 
 /** Tabuleiro desenhado por Java2D. Eventos e pintura executam exclusivamente na EDT. */
 final class BoardPanel extends JPanel {
-    static final Color[] COLORS = {new Color(38, 105, 207), new Color(210, 74, 76),
-            new Color(38, 146, 107), new Color(156, 98, 197)};
+    static final Color[] COLORS = {new Color(248, 202, 52), new Color(220, 61, 72),
+            new Color(44, 184, 205), new Color(239, 113, 151)};
     interface Actions {
         void requestMove(int row, int column);
         void requestWall(GameStateDTO.WallDTO wall);
@@ -143,7 +143,11 @@ final class BoardPanel extends JPanel {
                                 case "NORTH" -> row == 8; case "SOUTH" -> row == 0;
                                 case "EAST" -> column == 0; case "WEST" -> column == 8; default -> false;
                             };
-                            if (goal) { Color color = COLORS[player.id()]; g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 42)); g.fill(cell); }
+                            if (goal) {
+                                Color color = COLORS[player.id()];
+                                g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 48)); g.fill(cell);
+                                g.setColor(new Color(54, 48, 43, 105)); g.setStroke(new BasicStroke(1.2f)); g.draw(cell);
+                            }
                         }
                     }
                     if (!wallMode && moves.contains(new BoardHints.Cell(row, column))) {
@@ -162,12 +166,58 @@ final class BoardPanel extends JPanel {
             for (var player : state.players()) {
                 if (!player.joined()) { continue; }
                 var cell = cellBounds(board, player.row(), player.column());
-                int diameter = (int) (board.pitch * .6), x = (int) cell.getCenterX() - diameter / 2, y = (int) cell.getCenterY() - diameter / 2;
-                if (player.id() == localId) { g.setColor(Color.WHITE); g.fillOval(x - 4, y - 4, diameter + 8, diameter + 8); }
-                g.setColor(COLORS[player.id()]); g.fillOval(x, y, diameter, diameter);
-                g.setColor(Color.WHITE); g.setFont(getFont().deriveFont(Font.BOLD, (float) (board.pitch * .26)));
-                g.drawString(String.valueOf((char) ('A' + player.id())), (float) cell.getCenterX() - 5, (float) cell.getCenterY() + 6);
-                if (!player.connected()) { g.setColor(Color.DARK_GRAY); g.drawLine(x, y, x + diameter, y + diameter); g.drawLine(x + diameter, y, x, y + diameter); }
+                double size = board.pitch * .64, x = cell.getCenterX() - size / 2, y = cell.getCenterY() - size / 2;
+                Color outline = new Color(50, 43, 45);
+                if (player.id() == localId) {
+                    g.setColor(Color.WHITE);
+                    g.fillOval((int) (x - 5), (int) (y - 5), (int) (size + 10), (int) (size + 10));
+                }
+                g.setColor(COLORS[player.id()]);
+                g.setStroke(new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                if (player.id() == 0) {
+                    // O arco de 306 graus deixa uma abertura de 54 graus voltada à direita.
+                    var body = new java.awt.geom.Arc2D.Double(x, y, size, size, 27, 306, java.awt.geom.Arc2D.PIE);
+                    g.fill(body); g.setColor(outline); g.draw(body);
+                    g.setColor(outline);
+                    g.fillOval((int) (x + size * .43), (int) (y + size * .16),
+                            Math.max(3, (int) (size * .09)), Math.max(3, (int) (size * .09)));
+                } else {
+                    java.awt.geom.Path2D.Double ghost = new java.awt.geom.Path2D.Double();
+                    ghost.moveTo(x + size * .08, y + size * .91);
+                    ghost.lineTo(x + size * .08, y + size * .48);
+                    ghost.curveTo(x + size * .08, y - size * .12, x + size * .92, y - size * .12,
+                            x + size * .92, y + size * .48);
+                    ghost.lineTo(x + size * .92, y + size * .91);
+                    ghost.quadTo(x + size * .80, y + size * .73, x + size * .68, y + size * .91);
+                    ghost.quadTo(x + size * .56, y + size * .73, x + size * .44, y + size * .91);
+                    ghost.quadTo(x + size * .30, y + size * .73, x + size * .20, y + size * .91);
+                    ghost.quadTo(x + size * .13, y + size * .81, x + size * .08, y + size * .91);
+                    ghost.closePath();
+                    g.fill(ghost); g.setColor(outline); g.draw(ghost);
+                    g.setColor(Color.WHITE);
+                    g.fillOval((int) (x + size * .26), (int) (y + size * .31), (int) (size * .18), (int) (size * .23));
+                    g.fillOval((int) (x + size * .56), (int) (y + size * .31), (int) (size * .18), (int) (size * .23));
+                    g.setColor(outline);
+                    g.fillOval((int) (x + size * .33), (int) (y + size * .40), Math.max(3, (int) (size * .07)), Math.max(3, (int) (size * .07)));
+                    g.fillOval((int) (x + size * .63), (int) (y + size * .40), Math.max(3, (int) (size * .07)), Math.max(3, (int) (size * .07)));
+                }
+                g.setFont(getFont().deriveFont(Font.BOLD, (float) (board.pitch * .22)));
+                String letter = String.valueOf((char) ('A' + player.id()));
+                FontMetrics metrics = g.getFontMetrics();
+                float textX = (float) (cell.getCenterX() - metrics.stringWidth(letter) / 2.0 - (player.id() == 0 ? size * .10 : 0));
+                float textY = (float) (y + size * .78);
+                g.setColor(player.id() == 1 || player.id() == 3 ? Color.WHITE : outline);
+                g.drawString(letter, textX, textY);
+                if (!player.connected()) {
+                    g.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.setColor(Color.WHITE);
+                    g.drawLine((int) x, (int) y, (int) (x + size), (int) (y + size));
+                    g.drawLine((int) (x + size), (int) y, (int) x, (int) (y + size));
+                    g.setStroke(new BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.setColor(outline);
+                    g.drawLine((int) x, (int) y, (int) (x + size), (int) (y + size));
+                    g.drawLine((int) (x + size), (int) y, (int) x, (int) (y + size));
+                }
             }
             if (hover != null) {
                 g.setColor(hoverValid ? new Color(29, 158, 91, 195) : new Color(213, 50, 57, 195));

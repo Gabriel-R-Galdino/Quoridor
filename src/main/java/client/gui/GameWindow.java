@@ -141,8 +141,15 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
             card.setText("<html><b>[" + (char) ('A' + player.id()) + "] " + escape(player.joined() ? player.name() : "Aguardando")
                     + "</b><br>" + player.wallsRemaining() + " paredes"
                     + (player.joined() && !player.connected() ? " · desconectado" : "") + "</html>");
+            // A faixa preserva a cor do peão; texto escuro mantém o amarelo legível no cartão.
+            card.setForeground(new Color(50, 43, 45));
+            card.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 5, 0, 0, BoardPanel.COLORS[player.id()]),
+                    new EmptyBorder(12, 10, 12, 10)));
             card.setBackground(Integer.valueOf(player.id()).equals(state.currentPlayerId()) && state.winnerId() == null
-                    ? new Color(221, 232, 248) : Color.WHITE);
+                    ? new Color((BoardPanel.COLORS[player.id()].getRed() + 4 * 255) / 5,
+                            (BoardPanel.COLORS[player.id()].getGreen() + 4 * 255) / 5,
+                            (BoardPanel.COLORS[player.id()].getBlue() + 4 * 255) / 5) : Color.WHITE);
         }
         if (state.winnerId() != null) { turn.setText("Vencedor: " + label(state.winnerId())); }
         else if (!state.started()) {
