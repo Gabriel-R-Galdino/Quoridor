@@ -8,10 +8,17 @@ import java.awt.event.*;
 import java.awt.geom.RoundRectangle2D;
 import java.util.Set;
 
-/** Tabuleiro desenhado por Java2D. Eventos e pintura executam exclusivamente na EDT. */
+/** Tabuleiro desenhado por Java2D. Eventos e pintura executam exclusivamente na Event Dispatch Thread - EDT. */
 final class BoardPanel extends JPanel {
-    static final Color[] COLORS = {new Color(248, 202, 52), new Color(220, 61, 72),
-            new Color(44, 184, 205), new Color(239, 113, 151)};
+    static final Color[] COLORS = {new Color(248, 202, 52), new Color(201, 46, 69),
+            new Color(44, 184, 205), new Color(244, 136, 149)};
+    private static final Color BOARD_BACKGROUND = new Color(22, 35, 50);
+    private static final Color GRID = new Color(104, 123, 142);
+    private static final Color CELL = new Color(28, 45, 64);
+    private static final Color COORDINATE = new Color(217, 227, 236);
+    private static final Color WALL = new Color(255, 224, 161);
+    private static final Color OUTLINE = new Color(50, 43, 45);
+    private static final Color HALO = new Color(230, 237, 245);
     interface Actions {
         void requestMove(int row, int column);
         void requestWall(GameStateDTO.WallDTO wall);
@@ -128,14 +135,15 @@ final class BoardPanel extends JPanel {
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(BOARD_BACKGROUND); g.fillRect(0, 0, getWidth(), getHeight());
             Layout board = layoutBoard();
-            g.setColor(new Color(224, 214, 196));
+            g.setColor(GRID);
             g.fill(new RoundRectangle2D.Double(board.x - 12, board.y - 12, board.pitch * 9 + 24, board.pitch * 9 + 24, 22, 22));
             g.setFont(getFont().deriveFont(Font.BOLD, 12f));
             for (int row = 0; row < 9; row++) {
                 for (int column = 0; column < 9; column++) {
                     var cell = cellBounds(board, row, column);
-                    g.setColor(new Color(252, 247, 237)); g.fill(cell);
+                    g.setColor(CELL); g.fill(cell);
                     if (state != null) {
                         // Camadas transparentes permitem mostrar objetivos compartilhados nos cantos.
                         for (var player : state.players()) {
@@ -145,31 +153,34 @@ final class BoardPanel extends JPanel {
                             };
                             if (goal) {
                                 Color color = COLORS[player.id()];
-                                g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 48)); g.fill(cell);
-                                g.setColor(new Color(54, 48, 43, 105)); g.setStroke(new BasicStroke(1.2f)); g.draw(cell);
+                                Color goalColor = new Color((color.getRed() * 45 + 255 * 55) / 100,
+                                        (color.getGreen() * 45 + 255 * 55) / 100,
+                                        (color.getBlue() * 45 + 255 * 55) / 100);
+                                g.setColor(new Color(goalColor.getRed(), goalColor.getGreen(), goalColor.getBlue(), 155)); g.fill(cell);
+                                g.setColor(goalColor); g.setStroke(new BasicStroke(1.8f)); g.draw(cell);
                             }
                         }
                     }
                     if (!wallMode && moves.contains(new BoardHints.Cell(row, column))) {
-                        g.setColor(new Color(38, 146, 107, 65)); g.fill(cell);
-                        g.setColor(new Color(31, 137, 95)); g.setStroke(new BasicStroke(2)); g.draw(cell);
+                        g.setColor(new Color(73, 230, 161, 75)); g.fill(cell);
+                        g.setColor(new Color(73, 230, 161)); g.setStroke(new BasicStroke(2.4f)); g.draw(cell);
                         int diameter = (int) (board.pitch * .16);
                         g.fillOval((int) cell.getCenterX() - diameter / 2, (int) cell.getCenterY() - diameter / 2, diameter, diameter);
                     }
                 }
-                g.setColor(new Color(96, 101, 113));
+                g.setColor(COORDINATE);
                 g.drawString(String.valueOf(row), (float) (board.x - 29), (float) (board.y + row * board.pitch + board.pitch / 2 + 5));
                 g.drawString(String.valueOf(row), (float) (board.x + row * board.pitch + board.pitch / 2 - 3), (float) (board.y - 22));
             }
             if (state == null) { return; }
-            for (var wall : state.walls()) { g.setColor(new Color(75, 66, 54)); g.fill(wallBounds(board, wall)); }
+            for (var wall : state.walls()) { g.setColor(WALL); g.fill(wallBounds(board, wall)); }
             for (var player : state.players()) {
                 if (!player.joined()) { continue; }
                 var cell = cellBounds(board, player.row(), player.column());
                 double size = board.pitch * .64, x = cell.getCenterX() - size / 2, y = cell.getCenterY() - size / 2;
-                Color outline = new Color(50, 43, 45);
+                Color outline = OUTLINE;
                 if (player.id() == localId) {
-                    g.setColor(Color.WHITE);
+                    g.setColor(HALO);
                     g.fillOval((int) (x - 5), (int) (y - 5), (int) (size + 10), (int) (size + 10));
                 }
                 g.setColor(COLORS[player.id()]);
@@ -177,7 +188,9 @@ final class BoardPanel extends JPanel {
                 if (player.id() == 0) {
                     // O arco de 306 graus deixa uma abertura de 54 graus voltada à direita.
                     var body = new java.awt.geom.Arc2D.Double(x, y, size, size, 27, 306, java.awt.geom.Arc2D.PIE);
-                    g.fill(body); g.setColor(outline); g.draw(body);
+                    g.fill(body);
+                    g.setColor(HALO); g.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.draw(body);
+                    g.setColor(outline); g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.draw(body);
                     g.setColor(outline);
                     g.fillOval((int) (x + size * .43), (int) (y + size * .16),
                             Math.max(3, (int) (size * .09)), Math.max(3, (int) (size * .09)));
@@ -193,7 +206,9 @@ final class BoardPanel extends JPanel {
                     ghost.quadTo(x + size * .30, y + size * .73, x + size * .20, y + size * .91);
                     ghost.quadTo(x + size * .13, y + size * .81, x + size * .08, y + size * .91);
                     ghost.closePath();
-                    g.fill(ghost); g.setColor(outline); g.draw(ghost);
+                    g.fill(ghost);
+                    g.setColor(HALO); g.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.draw(ghost);
+                    g.setColor(outline); g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)); g.draw(ghost);
                     g.setColor(Color.WHITE);
                     g.fillOval((int) (x + size * .26), (int) (y + size * .31), (int) (size * .18), (int) (size * .23));
                     g.fillOval((int) (x + size * .56), (int) (y + size * .31), (int) (size * .18), (int) (size * .23));
@@ -206,7 +221,7 @@ final class BoardPanel extends JPanel {
                 FontMetrics metrics = g.getFontMetrics();
                 float textX = (float) (cell.getCenterX() - metrics.stringWidth(letter) / 2.0 - (player.id() == 0 ? size * .10 : 0));
                 float textY = (float) (y + size * .78);
-                g.setColor(player.id() == 1 || player.id() == 3 ? Color.WHITE : outline);
+                g.setColor(player.id() == 1 ? Color.WHITE : outline);
                 g.drawString(letter, textX, textY);
                 if (!player.connected()) {
                     g.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
@@ -220,8 +235,13 @@ final class BoardPanel extends JPanel {
                 }
             }
             if (hover != null) {
-                g.setColor(hoverValid ? new Color(29, 158, 91, 195) : new Color(213, 50, 57, 195));
-                g.fill(wallBounds(board, hover));
+                var preview = wallBounds(board, hover);
+                // O filete escuro separa a prévia colorida da grade de ardósia.
+                g.setColor(CELL);
+                g.fill(new RoundRectangle2D.Double(preview.x - 2, preview.y - 2,
+                        preview.width + 4, preview.height + 4, 5, 5));
+                g.setColor(hoverValid ? new Color(73, 230, 161) : new Color(255, 102, 119));
+                g.fill(preview);
             }
         } finally { g.dispose(); }
     }

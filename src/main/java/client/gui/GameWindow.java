@@ -11,6 +11,8 @@ import java.util.concurrent.ExecutionException;
 
 /** Estado de apresentação e componentes pertencem à EDT; os workers cuidam do RMI. */
 final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPanel.Actions {
+    private static final Color[] IDENTITY_COLORS = {new Color(118, 86, 0), new Color(165, 38, 64),
+            new Color(8, 99, 114), new Color(138, 43, 83)};
     private final CardLayout cards = new CardLayout();
     private final JPanel root = new JPanel(cards);
     private final JTextField name = new JTextField(22);
@@ -107,7 +109,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
                     // Um callback pode chegar antes de join retornar; refresh usa o DTO já recebido.
                     session = get(); playerId = session.playerId();
                     if (closing) { closeSession(); return; }
-                    identity.setText("Você: " + label(playerId)); identity.setForeground(BoardPanel.COLORS[playerId]);
+                    identity.setText("Você: " + label(playerId)); identity.setForeground(IDENTITY_COLORS[playerId]);
                     cards.show(root, "game"); message("Conectado a " + registryHost + ":1099. Seu ID é " + playerId + ".");
                     refresh(); announceWinner(state == null ? null : state.winnerId());
                 } catch (Exception error) {
