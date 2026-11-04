@@ -18,6 +18,7 @@ final class BoardHints {
 
     BoardHints(GameStateDTO state) { this.state = state; }
 
+    /** Calcula destinos para destacar; peões desconectados ainda ocupam suas casas. */
     Set<Cell> moves(int playerId) {
         Set<Cell> result = new HashSet<>();
         var player = state.players().stream().filter(p -> p.id() == playerId).findFirst().orElse(null);
@@ -31,6 +32,7 @@ final class BoardHints {
             if (step(adjacent.row(), adjacent.column(), behind.row(), behind.column(), null) && !occupied(behind)) {
                 result.add(behind);
             } else {
+                // Sem casa livre atrás do peão, o salto vira diagonal pelas laterais acessíveis.
                 for (int sign : new int[]{-1, 1}) {
                     Cell side = new Cell(adjacent.row() + dc * sign, adjacent.column() + dr * sign);
                     if (step(adjacent.row(), adjacent.column(), side.row(), side.column(), null) && !occupied(side)) {
@@ -42,12 +44,14 @@ final class BoardHints {
         return Set.copyOf(result);
     }
 
+    /** Prévia local: verifica conflitos, estoque e caminho de todos antes de enviar ao servidor. */
     boolean wallValid(int playerId, GameStateDTO.WallDTO candidate) {
         if (candidate.row() < 0 || candidate.row() >= state.boardSize() - 1
                 || candidate.column() < 0 || candidate.column() >= state.boardSize() - 1) { return false; }
         var player = state.players().stream().filter(p -> p.id() == playerId).findFirst().orElse(null);
         if (player == null || player.wallsRemaining() <= 0) { return false; }
         for (var wall : state.walls()) {
+            // Orientações diferentes cruzam no mesmo ponto; iguais se sobrepõem em pontos vizinhos.
             boolean conflict = wall.orientation() != candidate.orientation()
                     ? wall.row() == candidate.row() && wall.column() == candidate.column()
                     : wall.orientation() == WallOrientation.HORIZONTAL
@@ -63,6 +67,7 @@ final class BoardHints {
         return state.players().stream().anyMatch(p -> p.joined() && p.row() == cell.row() && p.column() == cell.column());
     }
 
+    /** BFS que testa a parede candidata sem modificar o DTO recebido por RMI. */
     private boolean pathExists(GameStateDTO.PlayerDTO player, GameStateDTO.WallDTO candidate) {
         boolean[][] visited = new boolean[state.boardSize()][state.boardSize()];
         ArrayDeque<Cell> queue = new ArrayDeque<>();
@@ -97,6 +102,7 @@ final class BoardHints {
         return state.walls().stream().noneMatch(wall -> blocks(wall, fr, fc, tr, tc));
     }
 
+    /** Uma parede bloqueia duas passagens ortogonais entre casas adjacentes. */
     private boolean blocks(GameStateDTO.WallDTO wall, int fr, int fc, int tr, int tc) {
         return wall.orientation() == WallOrientation.HORIZONTAL
                 ? fc == tc && Math.min(fr, tr) == wall.row() && (fc == wall.column() || fc == wall.column() + 1)

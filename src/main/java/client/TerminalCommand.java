@@ -28,6 +28,7 @@ sealed interface TerminalCommand {
     record PlaceWall(int row, int column, WallOrientation orientation) implements TerminalCommand { }
     record Quit() implements TerminalCommand { }
 
+    /** Reconhece a sintaxe; turno, paredes e validade do destino são decididos pelo servidor. */
     static TerminalCommand parse(String line) {
         String[] words = line.strip().toLowerCase(Locale.ROOT).split("\\s+");
         if (words.length == 1 && words[0].equals("q")) { return new Quit(); }

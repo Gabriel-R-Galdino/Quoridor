@@ -46,10 +46,12 @@ public final class ClientMain {
         try {
             String name = terminal.readName();
             if (name == null) { output.println("Entrada encerrada antes do registro."); return; }
+            // Consulta o Registry para obter o serviço e exporta o callback que receberá notificações do servidor.
             Registry registry = LocateRegistry.getRegistry(host, 1099);
             service = (GameService) registry.lookup(GameService.SERVICE_NAME);
             ClientCallback stub = (ClientCallback) UnicastRemoteObject.exportObject(callback, 0);
             exported = true;
+            // Callbacks podem chegar antes deste retorno; TerminalUI os guarda na fila de eventos.
             playerId = service.join(name, stub);
             GameService joinedService = service;
             int joinedId = playerId;
@@ -80,6 +82,7 @@ public final class ClientMain {
 
     private static void cleanup(GameService service, Integer playerId, ClientCallbackImpl callback,
                                 PrintWriter output, AtomicBoolean cleaned) {
+        // O fluxo normal e o shutdown hook podem tentar limpar a mesma sessão.
         if (!cleaned.compareAndSet(false, true)) { return; }
         try {
             if (service != null && playerId != null) { service.leave(playerId); }

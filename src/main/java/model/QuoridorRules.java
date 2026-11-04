@@ -5,7 +5,7 @@ import java.util.Objects;
 
 /**
  * Motor autoritativo local, sem RMI. Pedidos inválidos retornam false sem alterar nada.
- * O futuro servidor deverá serializar o acesso a esta instância entre chamadas remotas.
+ * GameServerImpl sincroniza o acesso a esta instância entre chamadas remotas.
  */
 public final class QuoridorRules {
     private static final int[][] DIRECTIONS = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
@@ -25,7 +25,7 @@ public final class QuoridorRules {
         return getWinner() == null && current != null && current.id() == playerId && current.connected();
     }
 
-    /** Tenta mover o jogador identificado até uma casa absoluta, com índices de 0 a 8. */
+    /* Tenta mover o jogador identificado até uma casa absoluta, com índices de 0 a 8. */
     public boolean tryMove(int playerId, int row, int column) {
         if (!canAct(playerId) || !Board.contains(row, column) || occupied(row, column)) {
             return false;
@@ -34,6 +34,7 @@ public final class QuoridorRules {
         if (!legalMove(player.position(), row, column)) {
             return false;
         }
+        // O estado só muda após todas as verificações; uma recusa não consome o turno.
         Position destination = new Position(row, column);
         state.replacePlayer(player.moveTo(destination));
         if (player.side().isGoal(destination)) {
@@ -50,6 +51,7 @@ public final class QuoridorRules {
                 player.position().row() == row && player.position().column() == column);
     }
 
+    /* Verifica passo, salto reto e diagonal ao redor de um único peão adjacente. */
     private boolean legalMove(Position from, int row, int column) {
         Board board = state.getBoard();
         for (int[] direction : DIRECTIONS) {
@@ -83,7 +85,7 @@ public final class QuoridorRules {
         return false;
     }
 
-    /** Tenta colocar uma parede. A ancoragem vai de 0 a 7 nos dois eixos. */
+    /* Tenta colocar uma parede. A ancoragem vai de 0 a 7 nos dois eixos. */
     public boolean tryPlaceWall(int playerId, int row, int column, Wall.Orientation orientation) {
         if (!canAct(playerId) || currentPlayer().wallsRemaining() == 0
                 || row < 0 || row >= 8 || column < 0 || column >= 8 || orientation == null) {
@@ -96,6 +98,7 @@ public final class QuoridorRules {
         for (Player player : state.getPlayers()) {
             if (!hasPath(player, candidate)) { return false; }
         }
+        // Só depois de confirmar os quatro caminhos a parede é colocada e consumida.
         board.addWall(candidate);
         state.replacePlayer(currentPlayer().useWall());
         state.advanceTurn();

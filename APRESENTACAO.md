@@ -6,7 +6,7 @@ Duração sugerida: 10 a 15 minutos, incluindo uma demonstração. Os comandos c
 
 **Fala sugerida:** “Implementei um Quoridor para quatro jogadores. Cada jogador executa seu próprio cliente em uma JVM, e outra JVM executa o servidor. Todos estão em localhost. O servidor é autoritativo: os clientes enviam intenções, e somente o servidor aceita e aplica as jogadas.”
 
-Mostre os cinco terminais e os quatro pacotes:
+Mostre os cinco processos e os pacotes principais:
 
 | Pacote | O que mostrar |
 | --- | --- |
@@ -14,6 +14,7 @@ Mostre os cinco terminais e os quatro pacotes:
 | `common` | Contratos remotos, exceção de negócio e DTOs serializáveis. |
 | `server` | Publicação do serviço, sincronização e notificações. |
 | `client` | Consulta ao Registry, callback exportado e interface textual. |
+| `client.gui` | Interface Swing; usa o mesmo serviço RMI e os mesmos DTOs. |
 
 O Registry embutido pertence à JVM do servidor; não existe um sexto processo `rmiregistry`.
 
@@ -38,7 +39,7 @@ Abra os arquivos abaixo e aponte estas classes e métodos:
 
 **Stub:** é o representante local de um objeto remoto. Quando o cliente chama `service.move(...)`, ele chama o stub, que encaminha a invocação à JVM do servidor. `exportObject` produz a referência remota usada para acessar o objeto exportado. Não precisei gerar classes de stub com `rmic`.
 
-**Callback:** inverte o sentido de uma chamada. Cada cliente exporta `ClientCallbackImpl` e passa seu stub em `join`. O servidor guarda esse stub e chama `onStateUpdate` para avisar mudanças sem exigir consultas periódicas do cliente.
+**Callback:** inverte o sentido de uma chamada. O terminal exporta `ClientCallbackImpl`; o Swing exporta `GuiCallback`. Ambos passam seu stub em `join`. O servidor guarda esse stub e chama `onStateUpdate` para avisar mudanças sem exigir consultas periódicas do cliente.
 
 **Dados por valor e referências remotas:** o `GameStateDTO` é uma cópia serializável do estado público. O callback é uma referência a um objeto remoto, não uma cópia da interface do terminal. O estado mutável do pacote `model` permanece no servidor.
 
@@ -106,11 +107,12 @@ Antes do início, a vaga desconectada fica disponível, mantendo o mesmo ID, lad
 ### Ciclo de vida e vitória por desconexão
 
 ```text
-LOBBY -- exatamente 4 entradas --> EM ANDAMENTO -- objetivo ou só 1 conectado --> FIM
-  ^                                    |                                        |
-  |                                    +------------ 0 conectados ---------------+
-  +----------------------- RESET (quando a sala fica vazia) <---------------------+
+LOBBY -- quarto jogador entra --> EM ANDAMENTO -- objetivo ou só 1 conectado --> FIM
+  ^                                                                        |
+  +---------------- RESET <-- último cliente sai --------------------------+
 ```
+
+No lobby, a saída do último cliente também executa o reset e mantém o servidor ativo.
 
 **Fala sugerida:** “Um, dois ou três jogadores permanecem no lobby. A contagem `Aguardando jogadores (N/4)` vai por `onMessage` a cada entrada e saída, e aparece nos dois clientes. O quarto inicia a partida; o quinto recebe `Partida cheia`. Além do bloqueio nos clientes, o servidor rejeita jogadas anteriores ao início.”
 
@@ -145,7 +147,7 @@ Para demonstrar saltos, fechamento de caminho e vitória sem uma partida longa, 
 
 ## 9. Evidências para concluir
 
-- `mvn test` executa os testes de regras, serviço e terminal, incluindo integração RMI e cinco JVMs separadas. Deixe a porta 1099 livre.
+- `mvn test` executa os testes de regras, serviço, terminal e Swing, incluindo integração RMI e cinco JVMs separadas. Deixe a porta 1099 livre.
 - As interfaces remotas e exportações estão explicitamente nos arquivos indicados acima.
 - A revisão dos fontes de aplicação e testes não encontrou importação, instanciação ou referência direta a `java.net.Socket` ou `java.net.ServerSocket`.
 - O transporte de rede interno do RMI pertence ao JDK; a aplicação usa somente a API RMI.

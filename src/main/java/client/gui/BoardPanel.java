@@ -71,6 +71,7 @@ final class BoardPanel extends JPanel {
             @Override public void actionPerformed(ActionEvent event) {
                 if (!interactive || wallMode || state == null) { return; }
                 var player = state.players().stream().filter(p -> p.id() == localId).findFirst().orElseThrow();
+                // A mesma seta pode representar um passo ou um salto reto sobre outro peão.
                 for (int distance = 1; distance <= 2; distance++) {
                     int row = player.row() + dr * distance, column = player.column() + dc * distance;
                     if (moves.contains(new BoardHints.Cell(row, column))) { actions.requestMove(row, column); return; }
@@ -81,6 +82,7 @@ final class BoardPanel extends JPanel {
 
     private record Layout(double x, double y, double pitch, double gap) { }
     private Layout layoutBoard() {
+        // pitch é o espaço de cada casa; gap reserva as faixas onde as paredes aparecem.
         double side = Math.max(90, Math.min(getWidth(), getHeight()) - 72);
         double pitch = side / 9;
         return new Layout((getWidth() - side) / 2, (getHeight() - side) / 2, pitch, pitch * .16);
@@ -106,6 +108,7 @@ final class BoardPanel extends JPanel {
             Layout board = layoutBoard();
             double x = (mouse.x - board.x) / board.pitch, y = (mouse.y - board.y) / board.pitch;
             if (x >= 0 && x < 9 && y >= 0 && y < 9) {
+                // Encaixa na borda mais próxima; a tolerância abaixo evita prévias no meio da casa.
                 int row = orientation == WallOrientation.HORIZONTAL ? (int) Math.round(y) - 1 : Math.min(7, (int) Math.floor(y));
                 int column = orientation == WallOrientation.VERTICAL ? (int) Math.round(x) - 1 : Math.min(7, (int) Math.floor(x));
                 double edgeDistance = orientation == WallOrientation.HORIZONTAL ? Math.abs(y - Math.rint(y)) : Math.abs(x - Math.rint(x));
@@ -121,6 +124,7 @@ final class BoardPanel extends JPanel {
     @Override
     protected void paintComponent(Graphics graphics) {
         super.paintComponent(graphics);
+        // A cópia de Graphics2D isola cores e traços usados nesta pintura; é liberada no finally.
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);

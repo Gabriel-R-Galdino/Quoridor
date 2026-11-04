@@ -32,6 +32,7 @@ public final class TerminalUI {
     private final BlockingQueue<Event> events = new LinkedBlockingQueue<>();
     private GameStateDTO state;
     private int playerId;
+    // Após enviar uma jogada, aguarda um DTO com versão maior antes de aceitar outra.
     private Long pendingVersion;
     private boolean gameOver;
 
@@ -74,8 +75,10 @@ public final class TerminalUI {
         try {
             boolean running = true;
             while (running) {
+                // Teclado e RMI entram na mesma fila; só esta thread altera o estado e escreve no console.
                 Event event = events.take();
                 if (event instanceof StateEvent update) {
+                    // Uma notificação atrasada não pode redesenhar uma versão antiga do tabuleiro.
                     if (state != null && update.state().version() <= state.version()) { continue; }
                     state = update.state();
                     gameOver = state.winnerId() != null;
@@ -123,6 +126,7 @@ public final class TerminalUI {
     private boolean handleCommand(GameService service, String line) {
         try {
             TerminalCommand command = TerminalCommand.parse(line);
+            // Sair permanece disponível até no lobby ou fora do turno.
             if (command instanceof TerminalCommand.Quit) {
                 output.println("Saindo do jogo.");
                 return false;
@@ -146,6 +150,7 @@ public final class TerminalUI {
             } else if (command instanceof TerminalCommand.PlaceWall wall) {
                 service.placeWall(playerId, wall.row(), wall.column(), wall.orientation());
             }
+            // O callback pode ser enfileirado durante a chamada, mas só será lido após este método retornar.
             pendingVersion = state.version();
         } catch (IllegalArgumentException error) {
             output.println("Erro: " + error.getMessage());
@@ -162,6 +167,7 @@ public final class TerminalUI {
     /** Desenha somente os dados recebidos; não importa nem executa o modelo de regras. */
     public static String renderAscii(GameStateDTO state, int localPlayerId) {
         int size = state.boardSize();
+        // Casas ocupam linhas pares e colunas múltiplas de 4; os espaços recebem as paredes.
         char[][] grid = new char[size * 2 - 1][size * 4 - 3];
         for (char[] row : grid) { Arrays.fill(row, ' '); }
         for (int row = 0; row < size; row++) {

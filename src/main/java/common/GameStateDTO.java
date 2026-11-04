@@ -16,6 +16,7 @@ public record GameStateDTO(long version, int boardSize, boolean started,
     private static final long serialVersionUID = 1L;
 
     public GameStateDTO {
+        // Copia as listas para que alterações posteriores no servidor não mudem este retrato.
         players = List.copyOf(players);
         walls = List.copyOf(walls);
     }

@@ -104,6 +104,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
             @Override protected void done() {
                 connecting = false;
                 try {
+                    // Um callback pode chegar antes de join retornar; refresh usa o DTO já recebido.
                     session = get(); playerId = session.playerId();
                     if (closing) { closeSession(); return; }
                     identity.setText("Você: " + label(playerId)); identity.setForeground(BoardPanel.COLORS[playerId]);
@@ -121,6 +122,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
     }
 
     private boolean canAct() {
+        // A interface só permite pedidos com sessão ativa, turno próprio e nenhum pedido pendente.
         return !closing && !busy && pendingVersion == null && session != null && state != null
                 && state.started() && state.winnerId() == null && Integer.valueOf(playerId).equals(state.currentPlayerId())
                 && state.players().stream().anyMatch(p -> p.id() == playerId && p.connected());
@@ -128,7 +130,6 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
 
     private void refresh() {
         boolean active = canAct();
-        wallMode.setEnabled(active);
         boolean hasWalls = state != null && state.players().stream().anyMatch(p -> p.id() == playerId && p.wallsRemaining() > 0);
         wallMode.setEnabled(active && hasWalls); rotate.setEnabled(active && hasWalls && wallMode.isSelected());
         if (!hasWalls && wallMode.isSelected()) { wallMode.setSelected(false); board.wallMode(false); }
@@ -156,6 +157,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
     @FunctionalInterface private interface RemoteAction { void run() throws Exception; }
     private void send(RemoteAction action) {
         if (!canAct()) { return; }
+        // A resposta RMI pode chegar antes do callback; só uma versão nova libera outra jogada.
         busy = true; pendingVersion = state.version(); refresh();
         new SwingWorker<Void, Void>() {
             @Override protected Void doInBackground() throws Exception { action.run(); return null; }
@@ -176,6 +178,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
 
     @Override public void gameStarted() { if (!closing) { message("A partida começou!"); } }
     @Override public void stateUpdated(GameStateDTO update) {
+        // Callbacks atrasados não podem substituir um estado mais recente nem reabrir o turno.
         if (closing || (state != null && update.version() <= state.version())) { return; }
         state = update;
         if (pendingVersion != null && update.version() > pendingVersion) { pendingVersion = null; }
@@ -194,6 +197,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
     }
 
     private void announceWinner(Integer winner) {
+        // O vencedor chega no DTO e em onGameOver; mostramos o diálogo uma única vez.
         if (winner == null || announcedWinner != null || closing) { return; }
         announcedWinner = winner;
         message("Fim do jogo. Vencedor: " + label(winner));
@@ -214,6 +218,7 @@ final class GameWindow extends JFrame implements GuiCallback.Listener, BoardPane
     private void leave() {
         if (closing) { return; }
         closing = true; refresh(); connect.setEnabled(false);
+        // Se join ainda estiver em curso, done fechará a sessão assim que ela existir.
         if (connecting) { connectionStatus.setText("Aguardando conexão para liberar a sessão…"); return; }
         closeSession();
     }

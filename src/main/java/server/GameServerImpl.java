@@ -23,7 +23,7 @@ import java.util.concurrent.Executors;
  * Callbacks usam uma fila única, preservando a ordem dos eventos sem segurar o monitor.
  */
 public final class GameServerImpl implements GameService, AutoCloseable {
-    private record Session(String name, ClientCallback callback) { }
+    private record Session(ClientCallback callback) { }
     private record Recipient(int id, Session session) { }
 
     private QuoridorRules rules = new QuoridorRules();
@@ -41,6 +41,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
     private boolean closed;
     private long version;
 
+    /** Ocupa a primeira vaga livre no lobby; o quarto registro inicia a partida. */
     @Override
     public synchronized int join(String nome, ClientCallback callback) throws GameException {
         requireOpen();
@@ -61,7 +62,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         if (name.length() > 40 || name.codePoints().anyMatch(Character::isISOControl)) {
             throw reject("O nome deve ter até 40 caracteres, sem caracteres de controle.");
         }
-        sessions[id] = new Session(name, callback);
+        sessions[id] = new Session(callback);
         names[id] = name;
         boolean justStarted = connectedCount() == 4;
         if (justStarted) {
@@ -128,6 +129,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         }
     }
 
+    /* Ponto comum de validação para movimento e parede antes de tocar no motor. */
     private void requireTurn(int playerId) throws GameException {
         requireOpen();
         requireSession(playerId);
@@ -166,7 +168,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         log("RESET", "Partida anterior descartada. " + lobbyMessage());
     }
 
-    // Chamado exclusivamente dentro do monitor do servidor.
+    // Chamado dentro do monitor: libera a vaga no lobby ou preserva o peão durante a partida.
     private void disconnect(int id, String reason) {
         sessions[id] = null;
         if (started) {
@@ -198,6 +200,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
         publish(message, false, newWinner);
     }
 
+    /** Converte o modelo interno em dados serializáveis sem entregar objetos mutáveis ao cliente. */
     private GameStateDTO snapshot() {
         List<GameStateDTO.PlayerDTO> players = rules.getState().getPlayers().stream().map(player ->
                 new GameStateDTO.PlayerDTO(player.id(), names[player.id()], player.side().name(),
@@ -236,6 +239,7 @@ public final class GameServerImpl implements GameService, AutoCloseable {
     }
 
     private synchronized boolean isActive(Recipient recipient) {
+        // Compara a sessão, não só o ID: um callback antigo não pode atingir quem reutilizou a vaga.
         return !closed && sessions[recipient.id()] == recipient.session();
     }
 

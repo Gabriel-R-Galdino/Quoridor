@@ -12,6 +12,7 @@ public final class GuiClientMain {
             System.err.println("O cliente Swing precisa de um ambiente gráfico.");
             return;
         }
+        // Componentes Swing são criados na Event Dispatch Thread (EDT).
         SwingUtilities.invokeLater(() -> {
             try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
             catch (Exception ignored) { /* Usa o tema padrão do Swing, sem biblioteca externa. */ }

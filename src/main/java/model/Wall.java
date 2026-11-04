@@ -24,6 +24,7 @@ public record Wall(int row, int column, Orientation orientation) {
                 : column == other.column && Math.abs(row - other.row) <= 1;
     }
 
+    /** Identifica as duas passagens entre casas que esta parede interrompe. */
     boolean blocks(int fromRow, int fromColumn, int toRow, int toColumn) {
         return orientation == Orientation.HORIZONTAL
                 ? fromColumn == toColumn && Math.min(fromRow, toRow) == row

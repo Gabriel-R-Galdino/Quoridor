@@ -20,6 +20,7 @@ final class GuiSession implements AutoCloseable {
         this.service = service;
         this.callback = callback;
         this.playerId = playerId;
+        // Se a JVM terminar sem fechar a janela, ainda avisamos o servidor sobre a saída.
         shutdownHook = new Thread(this::close, "quoridor-gui-saida");
         Runtime.getRuntime().addShutdownHook(shutdownHook);
     }
@@ -29,6 +30,7 @@ final class GuiSession implements AutoCloseable {
         System.setProperty("java.rmi.server.hostname", "localhost");
         GameService service = (GameService) LocateRegistry.getRegistry(host, 1099).lookup(GameService.SERVICE_NAME);
         GuiCallback callback = new GuiCallback(listener);
+        // O servidor recebe o stub exportado e o usa para devolver eventos por RMI.
         ClientCallback stub = (ClientCallback) UnicastRemoteObject.exportObject(callback, 0);
         try {
             return new GuiSession(service, callback, service.join(name, stub));
@@ -52,6 +54,7 @@ final class GuiSession implements AutoCloseable {
     @Override
     public void close() {
         requireBackground();
+        // O botão, o fechamento da janela e o shutdown hook podem chamar close ao mesmo tempo.
         if (!closed.compareAndSet(false, true)) { return; }
         try { service.leave(playerId); }
         catch (Exception error) { System.err.println("Não foi possível avisar a saída: " + error.getMessage()); }
